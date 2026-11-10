@@ -496,14 +496,28 @@ def _content_range_total(headers: Mapping[str, str], start: int, end: int) -> in
     return total
 
 
+def _resolve_weight_url(provider: str, repo_id: str, revision: str, filename: str) -> str:
+    """The HTTP URL of one weight file for a provider, built from validated, path-safe components only.
+
+    Hugging Face resolves through ``/{repo}/resolve/{rev}/{file}``; GitHub serves raw file bytes from
+    ``raw.githubusercontent.com/{repo}/{rev}/{file}``. Both honour HTTP range requests, so a header can be read without
+    downloading tensor data. An unknown provider is refused (never guessed)."""
+    validate_repo_id(repo_id)
+    validate_revision(revision)
+    if provider == "github":
+        return f"https://raw.githubusercontent.com/{repo_id}/{revision}/{urllib.parse.quote(_safe_repo_file(filename))}"
+    if provider in ("huggingface", "", None):
+        return f"https://huggingface.co/{repo_id}/resolve/{revision}/{urllib.parse.quote(_safe_repo_file(filename))}"
+    raise SecurityError(f"Unsupported weight-file provider {provider!r}.")
+
+
 def fetch_safetensors_header(fetcher: SafeFetcher, repo_id: str, revision: str, filename: str, *,
-                             expected_size: Optional[int] = None, stats: Optional[Dict[str, int]] = None) -> RemoteHeader:
+                             expected_size: Optional[int] = None, stats: Optional[Dict[str, int]] = None,
+                             provider: str = "huggingface") -> RemoteHeader:
     """The first 8 + N bytes of a safetensors file (N = declared JSON header length) and the file's real size, using exactly two
     HTTP range requests. The tensor data is never requested. ``expected_size`` (the size the Hub listed) must agree with the
     Content-Range total. ``stats`` accumulates ``requests`` and ``bytes`` actually received."""
-    validate_repo_id(repo_id)
-    validate_revision(revision)
-    url = f"https://huggingface.co/{repo_id}/resolve/{revision}/{urllib.parse.quote(_safe_repo_file(filename))}"
+    url = _resolve_weight_url(provider, repo_id, revision, filename)
 
     def get(start: int, end: int) -> Tuple[bytes, int]:
         return _range_get(fetcher, url, start, end, stats)
@@ -597,21 +611,16 @@ def _range_get(fetcher: SafeFetcher, url: str, start: int, end: int, stats: Opti
     return res.body, _content_range_total(res.headers, start, end)
 
 
-def _repo_resolve_url(repo_id: str, revision: str, filename: str) -> str:
-    validate_repo_id(repo_id)
-    validate_revision(revision)
-    return f"https://huggingface.co/{repo_id}/resolve/{revision}/{urllib.parse.quote(_safe_repo_file(filename))}"
-
-
 def fetch_gguf_header(fetcher: SafeFetcher, repo_id: str, revision: str, filename: str, *,
-                      expected_size: Optional[int] = None, stats: Optional[Dict[str, int]] = None) -> RemoteHeader:
+                      expected_size: Optional[int] = None, stats: Optional[Dict[str, int]] = None,
+                      provider: str = "huggingface") -> RemoteHeader:
     """The GGUF header (magic + KV block + tensor table + alignment padding) and the file's real size, using bounded HTTP range
     requests. The window doubles (1 MiB, 2 MiB, 4 MiB, 8 MiB) until the local parser reports the tensor table complete; the exact
     header extent is then trimmed with one more request, so no tensor data is ever requested. ``expected_size`` (the Hub-listed
     size) must agree with the Content-Range total."""
     from .evidence.repo_inspectors import inspect_gguf  # local import: keeps this module's import graph acyclic
 
-    url = _repo_resolve_url(repo_id, revision, filename)
+    url = _resolve_weight_url(provider, repo_id, revision, filename)
     first, total = _range_get(fetcher, url, 0, 0, stats)  # one byte first: cheap Content-Range to learn the real size
     if expected_size is not None and expected_size != total:
         raise ReaError(f"The remote file is {total} bytes, but the Hub listed {expected_size} bytes; refusing to trust either.")
@@ -842,10 +851,14 @@ def _sweep_stale(base: Path, rep: ReaReport) -> None:
 
 
 def _inspectable_model(info: Any) -> Tuple[Optional[Any], str]:
-    """The Hugging Face RepoInfo REA should look at: the model itself, or a GitHub repository's linked primary model."""
+    """The RepoInfo whose files REA should header-inspect.
+
+    A Hugging Face repository is inspected directly. A GitHub repository is inspected directly too: its own weight files
+    (safetensors / GGUF in the git tree) are read by header only, whether or not the repository links a Hugging Face model.
+    A linked Hugging Face model, when one exists, is a richer target and is preferred, but it is never required."""
     if info.source.kind == "github":
         model = getattr(info, "primary_model_info", None)
-        return (model, "") if model is not None else (None, "The repository has no linked Hugging Face model whose files REA could inspect.")
+        return (model, "") if model is not None else (info, "")
     return info, ""
 
 
@@ -917,7 +930,10 @@ def _run(rep: ReaReport, info: Any, fetcher: SafeFetcher, command: Optional[Sequ
         return _finish(rep, NOT_APPLICABLE, why)
     rep.shards_total = total
     names = [n for n, _ in targets]
-    pin = model.revision_sha or model.source.revision or "main"
+    provider = str(model.source.kind or "huggingface")
+    # A GitHub repository is pinned by its resolved commit; a Hugging Face repository by its revision_sha. Neither is ever
+    # guessed: an unpinnable revision falls back to the branch name the inspector read.
+    pin = (model.commit_sha if provider == "github" else model.revision_sha) or model.source.revision or "main"
     try:
         validate_revision(pin)
     except SecurityError:
@@ -952,7 +968,7 @@ def _run(rep: ReaReport, info: Any, fetcher: SafeFetcher, command: Optional[Sequ
         header_failures = sparse_failures = 0
         for i, (name, fmt) in enumerate(targets):
             try:
-                remote = fmt.fetch(fetcher, repo_id, pin, name, expected_size=listed_sizes.get(name), stats=stats)
+                remote = fmt.fetch(fetcher, repo_id, pin, name, expected_size=listed_sizes.get(name), stats=stats, provider=provider)
                 summary = fmt.summarize(remote.blob, remote.total_size)
             except (FetchError, SecurityError, ReaError) as exc:
                 header_failures += 1

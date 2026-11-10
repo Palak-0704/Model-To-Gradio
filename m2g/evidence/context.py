@@ -36,3 +36,4 @@ class CollectionContext:
     limits: EvidenceLimits = field(default_factory=EvidenceLimits)
     clock: Clock = utc_now
     secrets: Tuple[str, ...] = ()
+    provider: str = "huggingface"  # which host serves the file bytes: huggingface | github

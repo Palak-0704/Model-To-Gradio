@@ -69,7 +69,7 @@ def _not_fetched_item(ctx: CollectionContext, skipped: Dict[str, List[Dict[str, 
 
 def collect_file(ctx: CollectionContext, cand: Candidate) -> EvidenceItem:
     """Fetch and parse one file. Status: collected / missing / inaccessible / invalid (raw kept) / skipped."""
-    url = file_url(ctx.repo_id, ctx.revision, cand.name)
+    url = file_url(ctx.repo_id, ctx.revision, cand.name, ctx.provider)
     key = f"file:{cand.name}"
     out = fetch_bytes(ctx.fetcher, url, cand.cap)
     prov = Provenance(SOURCE_REPO_FILE, url, METHOD_GET, ctx.revision, ctx.clock(),
