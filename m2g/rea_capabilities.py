@@ -61,6 +61,7 @@ _INSPECT_WORDS = ("inspect", "list", "get", "view", "summary", "overview", "enum
 _WRITE_WORDS = ("write", "record", "update", "set", "create", "delete", "remove", "import", "export", "mutate", "apply", "patch",
                 "close", "open", "execute", "exec", "run", "launch", "send", "post", "put", "install", "attach", "kill")
 _EVIDENCE_ID_RE = re.compile(r"ev_[0-9a-fA-F]{8,}")
+_WORDS_RE = re.compile(r"[a-z][a-z0-9]{2,}")
 
 
 # --------------------------------------------------------------------------- safety policy
@@ -185,6 +186,26 @@ def tag_tools(tools: Mapping[str, Mapping[str, Any]], policy: Optional[Capabilit
             for tag, pairs in tagged.items()}
 
 
+def _tool_terms(tool: Mapping[str, Any]) -> Set[str]:
+    """Words a server itself advertises about a tool, including its schema vocabulary.
+
+    This is deliberately not a second capability taxonomy.  It lets a newly advertised
+    read-only tool compete for a question using its description and input contract.
+    """
+    schema = tool.get("inputSchema") if isinstance(tool.get("inputSchema"), Mapping) else {}
+    props = schema.get("properties") if isinstance(schema.get("properties"), Mapping) else {}
+    text = " ".join([str(tool.get("name") or ""), str(tool.get("description") or ""), *map(str, props.keys())])
+    return set(_WORDS_RE.findall(text.lower().replace("_", " ").replace("-", " ")))
+
+
+def _question_terms(question: "Question") -> Set[str]:
+    """Terms describing the missing evidence, rather than a predeclared tool class."""
+    # Arguments such as ``path`` and ``limit`` describe transport, not meaning;
+    # including them makes any file-reading tool look relevant.
+    text = " ".join((question.kind.replace("_", " "), question.text))
+    return set(_WORDS_RE.findall(text.lower().replace("_", " ").replace("-", " ")))
+
+
 # --------------------------------------------------------------------------- questions
 
 
@@ -217,11 +238,23 @@ class EvidenceState:
     coverage_partial: bool = False  # the platform inspected fewer files than the model has
     have: Set[str] = field(default_factory=set)  # evidence keys already established
     capabilities: Mapping[str, Sequence[str]] = field(default_factory=dict)  # tag -> eligible tool names
+    tools: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)  # complete advertised catalog for dynamic matching
 
 
 def _first_tool(state: EvidenceState, tag: str) -> Optional[str]:
     names = state.capabilities.get(tag) or ()
     return names[0] if names else None
+
+
+def _can_answer(state: EvidenceState, question: Question) -> bool:
+    if _first_tool(state, question.kind) is not None:
+        return True
+    policy = CapabilityPolicy()
+    wanted = _question_terms(question)
+    for tool in state.tools.values():
+        if isinstance(tool, Mapping) and policy.eligible(tool) and wanted & _tool_terms(tool):
+            return True
+    return False
 
 
 def generate_questions(state: EvidenceState) -> List[Question]:
@@ -234,13 +267,14 @@ def generate_questions(state: EvidenceState) -> List[Question]:
     seen: Set[Tuple[str, str]] = set()
 
     def add(kind: str, target: str, text: str, arguments: Mapping[str, Any]) -> None:
-        if _first_tool(state, kind) is None:
-            return  # no eligible capability can answer it: it is a recorded gap, not a plannable question
+        candidate = Question(f"{kind}:{target}", kind, target, text, dict(arguments))
+        if not _can_answer(state, candidate):
+            return  # no eligible advertised tool can answer it: it remains a recorded gap
         key = (kind, target)
         if key in seen:
             return
         seen.add(key)
-        qs.append(Question(f"{kind}:{target}", kind, target, text, dict(arguments)))
+        qs.append(candidate)
 
     # Per-file ambiguity/conflict: format undetermined, or an architecture the header did not confirm.
     for name, path in state.files:
@@ -289,15 +323,19 @@ def observe(state: EvidenceState, capability: str, target: str, output: str) -> 
     reveal NEW paging questions), the id a page actually addressed is marked as paged (never paged twice), and a declared
     format/architecture fills the per-file facts. A malformed or unexpected payload simply adds nothing - it never raises and
     never invents a fact."""
+    # A successful transport response is not automatically evidence.  Empty/malformed
+    # output must leave the gap open so the adaptive loop can report no progress.
+    gained: Set[str] = set()
+    if not isinstance(output, str) or not output.strip():
+        return gained
     gained = set(_PRODUCES.get(capability, frozenset()))
     state.have |= gained
-    if not isinstance(output, str):
-        return gained
     for evid in set(_EVIDENCE_ID_RE.findall(output)):
         state.retained_ids.setdefault(evid, target)
     if capability == "retained_view":
-        for evid in set(_EVIDENCE_ID_RE.findall(output)):
-            state.paged_ids.add(evid)
+        # Mark the requested page, not every id it happens to reveal.  A page can
+        # legitimately introduce a new retained item requiring a later page.
+        state.paged_ids.add(target)
     if capability == "byte_entropy":
         state.entropy_done.add(target)
     try:
@@ -367,18 +405,50 @@ def _required_satisfied(schema: Mapping[str, Any], args: Mapping[str, Any]) -> b
 
 
 def plan_questions(state: EvidenceState, questions: Sequence[Question],
-                   policy: Optional[CapabilityPolicy] = None) -> List[PlannedCall]:
+                   policy: Optional[CapabilityPolicy] = None,
+                   tools: Optional[Mapping[str, Mapping[str, Any]]] = None) -> List[PlannedCall]:
     """Turn the open questions into tool calls the server advertises and the policy permits.
 
-    Each question is resolved to the first eligible tool tagged with its capability (so a renamed or newly added tool is used), and
-    a call is planned at most once per (tool, target) - duplicate-call prevention. A question with no eligible capability is
-    skipped and stays a recorded gap."""
+    Existing labels provide stable reporting for known REA tools, but selection also
+    ranks *every* eligible advertised tool by overlapping question/tool terms derived
+    from its name, description, and schema.  Thus a new metadata/architecture tool can
+    be used without adding it to ``CAPABILITIES``.
+    """
     planned: List[PlannedCall] = []
     seen: Set[Tuple[str, str]] = set()
+    policy = policy or CapabilityPolicy()
+    tools = tools or {}
     for q in questions:
-        tool = _first_tool(state, q.kind)
-        if tool is None:
+        candidates: List[Tuple[int, str]] = []
+        # Unit callers and older integrations may provide only the organized index.
+        # Preserve that API; production passes the full catalog below for dynamic ranking.
+        for index, name in enumerate(state.capabilities.get(q.kind) or ()):
+            candidates.append((10_000 - index, name))
+        for name, tool_meta in tools.items():
+            if not isinstance(tool_meta, Mapping) or not policy.eligible(tool_meta):
+                continue
+            # Core protocol calls are driven exactly once by rea_client; they are
+            # not optional investigation capabilities even if their prose overlaps.
+            if name in {"binary_session", "inspect_model_artifact"}:
+                continue
+            schema = tool_meta.get("inputSchema") if isinstance(tool_meta.get("inputSchema"), Mapping) else {}
+            args = _filter_arguments(q.arguments, schema)
+            if not _required_satisfied(schema, args):
+                continue
+            score = len(_question_terms(q) & _tool_terms(tool_meta))
+            # A familiar organization label is a tie-breaker, not a gate.
+            if name in (state.capabilities.get(q.kind) or ()):
+                score += 10_000
+            if score:
+                candidates.append((score, name))
+        if not candidates:
             continue
+        best: Dict[str, int] = {}
+        for score, name in candidates:
+            best[name] = max(best.get(name, 0), score)
+        candidates = [(score, name) for name, score in best.items()]
+        candidates.sort(key=lambda item: (-item[0], item[1]))
+        tool = candidates[0][1]
         key = (tool, q.target)
         if key in seen:
             continue
