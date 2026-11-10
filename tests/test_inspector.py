@@ -1,5 +1,6 @@
 import unittest
 
+from m2g import analyzer as an
 from m2g import inspector as ins
 from m2g import security as sec
 from m2g.config import Settings
@@ -27,8 +28,11 @@ class TestHF(unittest.TestCase):
         hf(web, "sst2", files=[("config.json", 10), ("../../etc/passwd", 10), ("model.safetensors", 10), ("evil.py", 10)])
         ins.inspect_url("https://huggingface.co/" + PRESETS["sst2"]["repo_id"], web.fetcher())
         fetched = [c for c in web.calls if "/resolve/" in c]
-        self.assertEqual(len(fetched), 1)
-        self.assertTrue(fetched[0].endswith("/config.json"))
+        # the hostile sibling name is never requested; only files the listing really contains, pinned to the commit, are read
+        self.assertTrue(any(c.endswith("/config.json") for c in fetched))
+        self.assertFalse([c for c in fetched if ".." in c or "passwd" in c])
+        self.assertFalse([c for c in fetched if c.endswith((".safetensors", ".bin", ".gguf"))])
+        self.assertTrue(all(f"/resolve/{SHA}/" in c for c in fetched))
 
     def test_status_mapping(self):
         for status, needle in [(404, "not found"), (401, "denied"), (403, "denied")]:
@@ -72,6 +76,64 @@ class TestHF(unittest.TestCase):
         self.assertTrue(info.gated)
         blob = " ".join(f.request_log + info.warnings)
         self.assertNotIn(tok, blob)
+
+
+class TestHFCustomCodeSourceAnalysis(unittest.TestCase):
+    """A Hub repo that SHIPS custom Python code (config.auto_map / custom_code) has that code analysed statically, from the same
+    allow-listed raw-file endpoint, with the same bounds and guarantees as the GitHub path: nothing is executed, trust_remote_code
+    is never enabled, and a repository WITHOUT custom code is unchanged (no extra fetch, no source analysis)."""
+
+    def _custom(self, **config):
+        web = FakeWeb()
+        repo = PRESETS["remote"]["repo_id"]
+        hf(web, "remote", config={**PRESETS["remote"]["config"], **config})
+        base = f"https://huggingface.co/{repo}/resolve/{SHA}/"
+        web.add(base + "modeling_custom.py",
+                "import torch\nfrom transformers import PreTrainedModel\n\nclass CustomForCausalLM(PreTrainedModel):\n"
+                "    def forward(self, input_ids):\n        return input_ids\n")
+        return web, repo
+
+    def test_custom_code_is_read_statically_and_never_executed(self):
+        web, repo = self._custom()
+        info = ins.inspect_url("https://huggingface.co/" + repo, web.fetcher())
+        self.assertIsNotNone(info.source_analysis)
+        self.assertIn("modeling_custom.py", info.source_text)
+        # the raw source was fetched; the weight file was not, and no code was imported
+        self.assertTrue(any(c.endswith("modeling_custom.py") for c in web.calls))
+        self.assertFalse([c for c in web.calls if c.endswith((".safetensors", ".bin", ".gguf"))])
+
+    def test_the_static_analysis_establishes_a_contract_from_real_code(self):
+        web, repo = self._custom()
+        info = ins.inspect_url("https://huggingface.co/" + repo, web.fetcher())
+        io = info.source_analysis.io_contract
+        self.assertEqual([i["modality"] for i in io["inputs"]], ["text"])
+
+    def test_a_repository_without_custom_code_fetches_no_source(self):
+        web = FakeWeb()
+        repo = PRESETS["sst2"]["repo_id"]
+        hf(web, "sst2")
+        info = ins.inspect_url("https://huggingface.co/" + repo, web.fetcher())
+        self.assertIsNone(info.source_analysis)
+        self.assertEqual(info.source_text, {})
+        self.assertFalse([c for c in web.calls if c.endswith(".py")])
+
+    def test_a_remote_code_config_that_names_a_missing_file_is_harmless(self):
+        # auto_map names a module the listing does not contain: the fetch is skipped, no error, no source analysis
+        web = FakeWeb()
+        repo = PRESETS["remote"]["repo_id"]
+        hf(web, "remote", files=[("config.json", 800), ("model.safetensors", 300_000_000), ("README.md", 200)],
+           config={**PRESETS["remote"]["config"], "auto_map": {"AutoModelForCausalLM": "missing.module.Class"}})
+        info = ins.inspect_url("https://huggingface.co/" + repo, web.fetcher())
+        self.assertIsNone(info.source_analysis)  # nothing to analyse; the metadata analysis is unaffected
+        self.assertFalse([c for c in web.calls if c.endswith(".py")])
+
+    def test_the_analyzer_uses_the_custom_code_analysis_without_enabling_remote_code(self):
+        web, repo = self._custom()
+        info = ins.inspect_url("https://huggingface.co/" + repo, web.fetcher())
+        a = an.analyze(info)
+        self.assertIn("source_analysis", a.ui_hints)  # additive: it reaches the analysis and the generation handoff
+        self.assertFalse(a.trust_remote_code)  # static analysis never turns on remote code execution
+        self.assertEqual(a.status, "unsupported")  # the repo still needs trust_remote_code, so it stays refused
 
 
 class TestGitHub(unittest.TestCase):
@@ -123,6 +185,21 @@ class TestGitHub(unittest.TestCase):
         self.assertTrue(coverage["remaining"])
         self.assertIn("budget", coverage)
         self.assertTrue(info.evidence_ledger)
+
+    def test_deep_source_analysis_reads_modules_beyond_the_shallow_scan(self):
+        # Regression: the deep source analysis fetched modules the shallow scan did not reach with an undefined name,
+        # so it silently fell back to "did not complete" for any repo large enough to need the extra fetch. It must instead
+        # complete, using the same per-file byte bound as the shallow scan.
+        web = FakeWeb()
+        tree = [f"pkg/m{n}.py" for n in range(8)]
+        extra = {p: "import torch\ndef f(x): return x\n" for p in tree}
+        add_github_repo(web, "acme/many", tree=tree, extra_files=extra)
+        info = ins.inspect_url("https://github.com/acme/many", web.fetcher(),
+                               Settings(github_max_source_files=1, github_max_source_bytes=1000, github_max_source_file_bytes=1000))
+        self.assertIsNotNone(info.source_analysis)
+        self.assertEqual(info.source_analysis.coverage["modules_analysed"], 8)
+        self.assertFalse([w for w in info.warnings if "source analysis did not complete" in w])
+        self.assertTrue(info.source_text)  # the collected source reaches the REA stage without another fetch
 
 
 class TestRequirementsParser(unittest.TestCase):

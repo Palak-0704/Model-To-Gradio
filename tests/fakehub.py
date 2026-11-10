@@ -189,8 +189,9 @@ def add_github_repo(web, repo_id, *, readme="# Cool AI\nTorch model.", requireme
                       "license": {"spdx_id": "MIT"}, "private": False, "archived": False})
         base = branch
         tree = tree if tree is not None else ["README.md", "requirements.txt", "main.py"]
+        entries = [e if isinstance(e, tuple) else (e, 100) for e in tree]
         web.add(f"{api}/git/trees/{branch}?recursive=1",
-                {"truncated": False, "tree": [{"path": p, "type": "blob", "size": 100} for p in tree]})
+                {"truncated": False, "tree": [{"path": p, "type": "blob", "size": s} for p, s in entries]})
     raw = f"https://raw.githubusercontent.com/{repo_id}/{base}/"
     web.add(raw + "README.md", readme)
     if requirements is not None:

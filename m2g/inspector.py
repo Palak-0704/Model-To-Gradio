@@ -103,6 +103,9 @@ class RepoInfo:
     # Deep, repository-wide static analysis (m2g.source_analysis.SourceAnalysis): module graph, call graph, loading sites and an
     # evidence-backed I/O contract. Built from source text already fetched; nothing is imported or executed. None when not run.
     source_analysis: Optional[Any] = None
+    # The bounded TEXT of the source/config files the static scan already read (path -> text). Kept so the REA stage can hand REA
+    # a read-only copy of files this platform has already collected, without any extra fetch. Data only; never executed.
+    source_text: Dict[str, str] = field(default_factory=dict)
     package_keywords: List[str] = field(default_factory=list)
     # bookkeeping
     warnings: List[str] = field(default_factory=list)
@@ -592,6 +595,7 @@ def _inspect_hf(ref: SourceRef, fetcher: SafeFetcher, settings: Settings) -> Rep
         if fname == "README.md":
             info.readme = text[: settings.max_readme_chars]
         elif fname.endswith(".py"):
+            info.source_text[fname] = text  # kept for the static custom-code analysis and the REA source stage (no re-fetch)
             scanned = scan_python_source(fname, text)
             if scanned:
                 info.source_scan.append(scanned)
@@ -623,7 +627,87 @@ def _inspect_hf(ref: SourceRef, fetcher: SafeFetcher, settings: Settings) -> Rep
                                 "remaining": [n for n in hf_sources if n not in inspected],
                                 "budget": {"max_source_files": settings.github_max_source_files,
                                            "max_source_file_bytes": settings.github_max_source_file_bytes}}
+    _hf_custom_code_source(info, ref, fetcher, settings, pin)
     return info
+
+
+def _hf_custom_code_source(info: RepoInfo, ref: SourceRef, fetcher: SafeFetcher, settings: Settings, pin: str) -> None:
+    """Statically analyse the Python code a Hugging Face repo SHIPS (custom modelling code), without executing any of it.
+
+    A repository with ``config.auto_map`` (or the ``custom_code`` tag) ships its own modelling/tokenizer code. The same
+    repository-wide static analysis the GitHub path uses (module graph, loading sites, I/O contract) is run over those files,
+    read from the Hub's raw-file endpoint. Only files the Hub listing shows, under a strict per-file and total byte bound, are
+    fetched; nothing is imported, executed or installed, and ``trust_remote_code`` is never enabled. Absent custom code (the
+    common case) makes this a no-op, so a metadata-only Hugging Face analysis is unchanged."""
+    cfg = info.config or {}
+    auto_map = cfg.get("auto_map") if isinstance(cfg, dict) else None
+    ships_code = bool(auto_map) or "custom_code" in (info.tags or [])
+    if not ships_code:
+        return
+    from .source_analysis import MAX_MODULES, analyze_repository, select_modules
+    limit = int(getattr(settings, "max_source_modules", 0) or MAX_MODULES)
+    listed = info.files
+    modules, skipped = select_modules(listed, limit=limit)
+    # Auto-map may name files the heuristic selection skipped (a custom model in an unconventional path): add them explicitly.
+    for path in _auto_map_paths(auto_map):
+        if path not in modules and any(p == path for p, _ in listed):
+            modules.append(path)
+    sizes = dict(listed)
+    text: Dict[str, str] = {}
+    total = 0
+    for path in modules[: settings.hf_custom_code_max_files]:
+        size = sizes.get(path)
+        if size is not None and size > settings.hf_custom_code_max_file_bytes:
+            info.warnings.append(f"{path} skipped from the custom-code scan (larger than {settings.hf_custom_code_max_file_bytes} bytes).")
+            continue
+        if total >= settings.hf_custom_code_max_bytes:
+            skipped.append({"path": path, "reason": "custom-code byte budget exhausted"})
+            continue
+        if path in info.source_text:  # the shallow Hub scan already fetched it: reuse, never download twice
+            text[path] = info.source_text[path]
+            total += len(text[path])
+            continue
+        try:
+            res = fetcher.fetch(f"https://huggingface.co/{ref.repo_id}/resolve/{pin}/{path}",
+                                max_bytes=settings.hf_custom_code_max_file_bytes)
+        except (HTTPStatusError, NetworkError, FetchError) as exc:
+            info.warnings.append(f"Could not fetch custom code {path}: {redact_secrets(str(exc))[:80]}")
+            continue
+        info.fetched.append((path, len(res.body)))
+        body = res.body.decode("utf-8", errors="replace")
+        text[path] = body
+        info.source_text[path] = body
+        total += len(body)
+    if not text:
+        return
+    try:
+        src = analyze_repository(sorted(text.items()), listed=listed,
+                                 limits={"max_modules": settings.hf_custom_code_max_files})
+        for s in skipped:
+            if s not in src.skipped:
+                src.skipped.append(s)
+        info.source_analysis = src
+    except Exception as exc:  # a static-analysis failure must never break inspection; the metadata analysis still stands
+        info.warnings.append(f"The custom-code static analysis did not complete ({type(exc).__name__}); the metadata analysis is unaffected.")
+
+
+def _auto_map_paths(auto_map: Any) -> List[str]:
+    """The distinct repository paths named by a ``config.auto_map`` mapping.
+
+    A value is a dotted ``module.Class`` reference (optionally ``pkg.module.Class``); the last segment is the class, the rest is
+    the module path, so ``"a.b.Class"`` names ``a/b.py``."""
+    out: List[str] = []
+    if not isinstance(auto_map, dict):
+        return out
+    for value in auto_map.values():
+        for entry in (value if isinstance(value, list) else [value]):
+            if not isinstance(entry, str) or "." not in entry or "/" in entry:
+                continue
+            module = entry.rsplit(".", 1)[0]
+            path = module.replace(".", "/") + ".py"
+            if path not in out:
+                out.append(path)
+    return out
 
 
 # --------------------------------------------------------------------------- GitHub
@@ -1057,7 +1141,8 @@ def _inspect_github(ref: SourceRef, fetcher: SafeFetcher, settings: Settings) ->
                 if path in scanned_text:
                     continue
                 try:
-                    res = fetcher.fetch(f"https://raw.githubusercontent.com/{ref.repo_id}/{fetch_ref}/{path}", max_bytes=_MAX_SOURCE_FILE)
+                    res = fetcher.fetch(f"https://raw.githubusercontent.com/{ref.repo_id}/{fetch_ref}/{path}",
+                                        max_bytes=settings.github_max_source_file_bytes)
                 except (HTTPStatusError, NetworkError, FetchError):
                     continue
                 info.fetched.append((path, len(res.body)))
@@ -1067,6 +1152,15 @@ def _inspect_github(ref: SourceRef, fetcher: SafeFetcher, settings: Settings) ->
                 if s not in src.skipped:
                     src.skipped.append(s)
             info.source_analysis = src
+            # Keep the bounded text of the files the static scan already read, so the REA stage can give REA a read-only copy
+            # of them (no extra fetch). Bounded per file and in total; only text/config files that were really fetched.
+            budget = settings.github_max_source_bytes
+            kept = 0
+            for path, text in sorted(scanned_text.items()):
+                if kept >= budget or len(text) > settings.github_max_source_file_bytes:
+                    continue
+                info.source_text[path] = text
+                kept += len(text)
         except Exception as exc:  # a static-analysis failure must never break inspection; the shallow scan still stands
             info.warnings.append(f"Deep source analysis did not complete ({type(exc).__name__}); the basic source scan is unaffected.")
 

@@ -438,6 +438,80 @@ class TestCapabilityFailures(Base):
             client.call_tool("gdb_console", {"command": "x"}, target="session")
 
 
+class TestSourceInvestigationIntegration(Base):
+    """The REAL client, over REAL stdio, against a mock server that advertises a source-text tool: the Analyzer-informed source
+    questions are answered by staging the ALREADY-COLLECTED source read-only and selecting the tool by capability."""
+
+    def _run_with_source(self, mode="source", config=None):
+        self.set_mode(mode)
+        web_ = RangeWeb()
+        fetcher = SafeFetcher(Settings(), resolver=PUBLIC, transport=web_)
+        info = hf_info((("config.json", 5), ("model.safetensors", SIZE)))
+        info.config = config if config is not None else {}  # unknown architecture: the Analyzer raises source questions
+        info.source_text = {"model.py": "import torch\nclass Tiny: pass\n"}
+        report = rc.run_rea_inspection(info, fetcher, Settings(), command=CMD, project_dir=self.tmp)
+        return report, web_
+
+    def test_a_source_text_tool_is_discovered_and_invoked(self):
+        report, _ = self._run_with_source()
+        self.assertEqual(report.status, rc.COMPLETED)
+        self.assertIn("source_text", report.capabilities_by_tag)
+        self.assertIn("read_source_file", self.tools_invoked())
+        self.assertEqual([i["capability"] for i in report.investigation if i["tool"] == "read_source_file"], ["source_text"])
+
+    def test_the_staged_source_is_read_only_and_inside_the_scratch_dir(self):
+        self._run_with_source()
+        rows = [json.loads(line) for line in self.log.read_text(encoding="utf-8").splitlines() if line.strip()]
+        reads = [r for r in rows if "source_read" in r]
+        self.assertTrue(reads)
+        for r in reads:
+            self.assertTrue(str(r["source_read"]).startswith(str(self.tmp)))
+            self.assertNotIn("..", str(r["source_read"]))
+
+    def test_an_answered_source_question_is_not_recorded_as_an_open_gap(self):
+        report, _ = self._run_with_source()
+        self.assertEqual(report.source_questions, [])  # the source tool answered them
+        self.assertTrue([i for i in report.investigation if i["capability"] == "source_text" and i["ok"]])
+
+    def test_without_a_source_tool_the_questions_are_recorded_as_gaps_not_invented(self):
+        report, _ = self._run_with_source(mode="ok")  # only the core tools are advertised
+        self.assertEqual(report.status, rc.COMPLETED)  # a missing optional capability never changes the verdict
+        self.assertTrue(report.source_questions)
+        self.assertEqual([i for i in report.investigation if i["capability"] == "source_text"], [])
+
+    def test_the_combined_analysis_surfaces_source_questions_as_recorded_gaps(self):
+        from m2g.analyzer import _rea_investigation_section, _rea_side
+        report, _ = self._run_with_source(mode="ok")
+        side = _rea_side(report.to_dict())
+        self.assertTrue(side["source_questions"])
+        section, warnings = _rea_investigation_section(side)
+        self.assertEqual(len(section["source_questions"]), len(side["source_questions"]))
+        self.assertTrue(any("no tool that returns local source text" in w for w in warnings))
+
+
+class TestPromptDiscovery(Base):
+    """MCP prompts are discovered (read-only) and reported; a server without them yields an empty list, never a failure."""
+
+    def test_advertised_prompts_are_discovered(self):
+        self.set_mode("prompts")
+        report, _ = self.run_rea()
+        self.assertEqual(report.status, rc.COMPLETED)
+        self.assertEqual([p["name"] for p in report.prompts], ["model-artifact-review"])
+
+    def test_a_server_without_prompts_is_not_an_error(self):
+        self.set_mode("ok")  # this server answers prompts/list with a JSON-RPC error
+        report, _ = self.run_rea()
+        self.assertEqual(report.status, rc.COMPLETED)
+        self.assertEqual(report.prompts, [])
+
+    def test_prompts_reach_the_combined_analysis(self):
+        from m2g.analyzer import _rea_investigation_section, _rea_side
+        self.set_mode("prompts")
+        report, _ = self.run_rea()
+        section, _ = _rea_investigation_section(_rea_side(report.to_dict()))
+        self.assertEqual([p["name"] for p in section["prompts"]], ["model-artifact-review"])
+
+
 class TestEndToEndHandoff(unittest.TestCase):
     """The capability investigation reaches the combined analysis and the Gradio generation handoff (real pipeline)."""
 
@@ -488,6 +562,75 @@ class TestEndToEndHandoff(unittest.TestCase):
         self.assertTrue(rea["investigation_stop_reason"])
         self.assertIn("byte_entropy", rea["capabilities_by_tag"])
         self.assertTrue(any(i["tool"] == "inspect_byte_entropy" for i in rea["investigation"]))
+
+
+class TestGitHubSourceEndToEnd(unittest.TestCase):
+    """A GitHub ML repository (real pipeline, mock server): the platform's own static source analysis and REA's source
+    investigation both run, the REA source findings reach the combined analysis with provenance, and the generation handoff
+    consumes them. The REA SERVER is a fixture; the inspector, source analysis, client, policy and pipeline are the real code."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.log = self.tmp / "calls.jsonl"
+        patcher = mock.patch.dict(os.environ, {"FAKE_REA_MODE": "source", "FAKE_REA_LOG": str(self.log)})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _run_pipeline(self):
+        from fakehub import add_github_repo
+        from m2g import gradio_gen as gg
+        from m2g.pipeline import run_pipeline
+        from fake_opencode import FakeOpenCodeAdapter, facts_of
+        web_ = RangeWeb()
+        add_github_repo(web_, "acme/ml-repo", requirements="torch>=2.0\ntransformers\n",
+                        tree=["README.md", "requirements.txt", "model.py", "inference.py", ("model.safetensors", SIZE)],
+                        extra_files={"model.py": "import torch\nfrom transformers import AutoModel, AutoTokenizer\n"
+                                                "def load_model(name):\n"
+                                                "    tok = AutoTokenizer.from_pretrained(name)\n"
+                                                "    model = AutoModel.from_pretrained(name)\n"
+                                                "    return tok, model\n",
+                                     "inference.py": "def predict(text):\n    return text\n"})
+        settings = Settings(output_dir=self.tmp / "out")
+        runner = rc.make_runner(settings, command=CMD, project_dir=self.tmp)
+        res = run_pipeline("https://github.com/acme/ml-repo", settings, web_.fetcher(output_dir=self.tmp / "out"),
+                           write=False, rea=runner)
+        return res, gg, FakeOpenCodeAdapter, facts_of
+
+    def test_platform_static_source_analysis_reaches_the_analysis(self):
+        res, _gg, _A, _f = self._run_pipeline()
+        self.assertIsNone(res.error, res.error)
+        src = res.analysis.ui_hints.get("source_analysis")
+        self.assertIsNotNone(src)
+        self.assertTrue(src["load_sites"])  # the real AutoModel/AutoTokenizer.from_pretrained calls were found
+
+    def test_rea_source_investigation_runs_and_reaches_the_combined_analysis(self):
+        res, _gg, _A, _f = self._run_pipeline()
+        self.assertEqual(res.rea.status, rc.COMPLETED, res.rea.log)
+        self.assertIn("read_source_file", [c.tool for c in res.rea.calls])
+        section = res.analysis.combined_analysis["rea_investigation"]
+        source_calls = [i for i in section["calls"] if i["tool"] == "read_source_file"]
+        self.assertTrue(source_calls)
+        self.assertTrue(all(i["capability"] == "source_text" and i["ok"] for i in source_calls))
+        self.assertEqual(section["source_questions"], [])  # the source tool answered them, so none is left open
+
+    def test_the_platform_source_analysis_reaches_the_generation_handoff(self):
+        res, _gg, _A, _f = self._run_pipeline()
+        # the GitHub-native generation consumes the analysis' own static source evidence (loading sites, contract)
+        src = res.analysis.ui_hints.get("source_analysis")
+        self.assertIsNotNone(src)
+        self.assertTrue(any("from_pretrained" in s["call"] for s in src["load_sites"]))
+
+    def test_the_source_findings_reach_the_generation_handoff(self):
+        res, gg, _A, facts_of = self._run_pipeline()
+        # the request the generation handoff would send carries the REA source findings (the GitHub-native path emits a scaffold,
+        # so the handoff request itself is asserted here rather than a live OpenCode call)
+        self.assertTrue(res.analysis.generatable)
+        facts = facts_of(gg.build_request(res.analysis))
+        rea = facts["rea_inspection"]
+        self.assertEqual(rea["source_questions"], [])  # the source tool answered them, so none is left open
+        self.assertTrue(any(i["tool"] == "read_source_file" and i["capability"] == "source_text"
+                            for i in rea["investigation"]))
 
 
 if __name__ == "__main__":

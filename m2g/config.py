@@ -75,6 +75,11 @@ class Settings:
     rea_max_investigation_failures: int = 5
     # Deep static source analysis: how many of the repository's own Python modules are parsed per run (bounded, never executed).
     max_source_modules: int = 60
+    # A Hugging Face repository that ships custom Python code (config.auto_map / custom_code) is analysed statically too, from the
+    # same allow-listed Hub raw-file endpoint. Bounded and never executed; only files this small and this many are read.
+    hf_custom_code_max_files: int = 24
+    hf_custom_code_max_bytes: int = 2_000_000
+    hf_custom_code_max_file_bytes: int = 1_000_000
     hf_token: Optional[str] = field(default=None, repr=False)
     github_token: Optional[str] = field(default=None, repr=False)
 
@@ -102,6 +107,9 @@ class Settings:
             rea_max_investigation_seconds=float(os.environ.get("M2G_REA_MAX_SECONDS", "120")),
             rea_max_investigation_failures=int(os.environ.get("M2G_REA_MAX_FAILURES", "5")),
             max_source_modules=int(os.environ.get("M2G_MAX_SOURCE_MODULES", "60")),
+            hf_custom_code_max_files=int(os.environ.get("M2G_HF_CUSTOM_CODE_FILES", "24")),
+            hf_custom_code_max_bytes=int(os.environ.get("M2G_HF_CUSTOM_CODE_BYTES", "2000000")),
+            hf_custom_code_max_file_bytes=int(os.environ.get("M2G_HF_CUSTOM_CODE_FILE_BYTES", "1000000")),
             hf_token=os.environ.get("HF_TOKEN") or None,
             github_token=os.environ.get("GITHUB_TOKEN") or None,
         )

@@ -11,7 +11,7 @@ it **never downloads weights and never executes repository code**. `trust_remote
 ## Test suite
 
 - Runner: `pytest` (see `pytest.ini`; `addopts = -q`, `testpaths = tests`).
-- Full suite baseline: **1385 passed, 9 skipped, 388 subtests passed** (~60 s), offline (fake transports).
+- Full suite baseline: **1418 passed, 9 skipped, 388 subtests passed** (~60 s), offline (fake transports).
 - All tests run against fakes — no network, no REA server, no OpenCode, no credits:
   - `tests/fakehub.py` — fake HF Hub + GitHub transport (`FakeWeb`, `hf`, `add_github_repo`, `RangeWeb`).
   - `tests/fake_rea_server.py` — mock REA MCP server.
@@ -32,10 +32,15 @@ it **never downloads weights and never executes repository code**. `trust_remote
   single structured handoff consumed by generation and written to `analysis.json` under `combined_analysis`.
 - `m2g/capabilities.py` — capability detection + `build_model_evidence` (bounded config digest).
 - `m2g/inference_contract.py` — loader/contract selection.
-- `m2g/rea_client.py`, `m2g/rea_capabilities.py` — REA MCP integration: tool discovery, adaptive question planning.
+- `m2g/rea_client.py`, `m2g/rea_capabilities.py` — REA MCP integration: tool discovery, adaptive question planning. The
+  planner also resolves the platform's OWN source-analysis gaps (a `source_text`-tagged tool is handed the already-collected
+  source staged read-only in the scratch dir; no extra download, nothing executed). Questions no eligible capability can answer
+  are recorded as open gaps (`rea_investigation.source_questions`). MCP prompt templates are discovered read-only via
+  `prompts/list` and surfaced (`prompts`), never rendered or auto-applied.
 - `m2g/evidence/` — evidence collection (repo inspectors, tensors, files, guards, context).
-- `m2g/claims.py` — claim/validation engine.
-- `m2g/source_analysis.py` — static (AST-only) GitHub source analysis.
+- `m2g/claims.py` — claim/validation engine. Claims are derived from REA findings too (`refs_from_rea`), with conflicts kept.
+- `m2g/source_analysis.py` — static (AST-only) GitHub source analysis; the same analysis runs on a Hub repo's shipped custom
+  code (`config.auto_map` / `custom_code` tag) via `inspector._hf_custom_code_source`.
 
 ### `combined_analysis` report (PART M, 25 areas)
 

@@ -666,6 +666,9 @@ def _rea_facts(a: Analysis) -> Dict[str, Any]:
         "capabilities_by_tag": {str(k): list(v) for k, v in (rea.get("capabilities_by_tag") or {}).items()},
         "questions_raised": [{"kind": q.get("kind"), "target": q.get("target"), "text": q.get("text")}
                              for q in _dict_items(rea.get("questions"))][:20],
+        "source_questions": [{"target": q.get("target"), "text": q.get("text")}
+                             for q in _dict_items(rea.get("source_questions"))][:20],
+        "prompts_advertised": [p.get("name") for p in _dict_items(rea.get("prompts"))][:10],
         "investigation_stop_reason": str(rea.get("stop_reason") or ""),
         "investigation": [{"tool": i.get("tool"), "target": i.get("target"), "reason": i.get("reason"), "ok": i.get("ok"),
                            "capability": i.get("capability")} for i in _dict_items(rea.get("investigation"))][:20],
