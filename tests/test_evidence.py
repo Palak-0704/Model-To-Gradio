@@ -495,7 +495,7 @@ class TestReaEvidence(unittest.TestCase):
         build_repo(ft)
         bundle = run(ft, rea_report=self._report())
         inv = bundle.get("rea:inventory").data
-        self.assertEqual(inv["allowed_tools"], ["binary_session", "inspect_model_artifact"])
+        self.assertEqual(inv["allowed_tools"], ["binary_session", "inspect_model_artifact", "inspect_analysis_view"])
         self.assertEqual(inv["tools_advertised_by_server"], 229)
         self.assertEqual(inv["fixed_arguments"]["inspect_model_artifact"], {"hash": "header", "detail": "summary"})
         self.assertEqual(bundle.get("rea:status").status, COLLECTED)
