@@ -150,10 +150,11 @@ class LoadSite:
     model_id: Optional[str]
     args: List[Any]
     kwargs: Mapping[str, Any]
+    function: str = ""  # the enclosing function/class the load happens in ("" = module level), for flow analysis
 
     def to_dict(self) -> Dict[str, Any]:
         return {"module": self.module, "line": self.line, "call": self.call, "framework": self.framework, "family": self.family,
-                "model_id": self.model_id, "args": list(self.args), "kwargs": dict(self.kwargs)}
+                "model_id": self.model_id, "args": list(self.args), "kwargs": dict(self.kwargs), "function": self.function}
 
 
 @dataclass
@@ -351,7 +352,7 @@ def _call_graph(modules: List[ModuleRef], import_edges: List[ImportEdge]) -> Tup
                 if role == "infer":
                     fam = next((name for name, rx in _INFER_SIGNATURES if rx.search(call)), None)
                     if fam:
-                        infer_sites.append({"module": m.module, "line": line, "call": call, "kind": fam,
+                        infer_sites.append({"module": m.module, "line": line, "call": call, "kind": fam, "function": str(row.get("in") or ""),
                                             "args": list(row.get("args") or []), "kwargs": dict(row.get("kwargs") or {})})
     return edges[:MAX_CALL_EDGES], infer_sites[:MAX_FACTS], sorted(frameworks)
 
@@ -378,7 +379,7 @@ def _load_sites(modules: List[ModuleRef]) -> Tuple[List[LoadSite], List[str]]:
             if model_id is None:
                 model_id = next((v for k, v in kwargs.items() if k in ("pretrained_model_name_or_path", "model_name_or_path",
                                                                        "model_id", "model", "repo_id") and isinstance(v, str)), None)
-            sites.append(LoadSite(m.module, int(row.get("line") or 0), call, fw, fam, model_id, args, kwargs))
+            sites.append(LoadSite(m.module, int(row.get("line") or 0), call, fw, fam, model_id, args, kwargs, str(row.get("in") or "")))
     return sites[:MAX_LOAD_SITES], sorted(frameworks)
 
 
@@ -395,6 +396,69 @@ def _entrypoints(modules: List[ModuleRef]) -> List[Dict[str, Any]]:
                             "decorators": [str(d) for d in (fn.get("decorators") or [])][:4],
                             "returns": str(fn.get("returns") or "")})
     return out[:MAX_FACTS]
+
+
+def _inference_flow(modules: List[ModuleRef], load_sites: List[LoadSite],
+                    infer_sites: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Reconstruct the load -> preprocess -> infer -> postprocess flow, cross-file, from the enclosing function of each call.
+
+    A loading site, an inference call and the surrounding preprocessing/postprocessing are related when they share the enclosing
+    function/class (e.g. a ``predict`` method that loads the model, tokenizes, calls ``generate`` and decodes). Where a step has no
+    evidence in that function it is reported as a recorded gap (``missing``), never invented. The flow is static evidence only."""
+    def calls_of(module: str, role: str) -> List[Dict[str, Any]]:
+        m = next((x for x in modules if x.module == module), None)
+        return [r for r in ((m.facts.get("calls") or {}).get(role) or []) if isinstance(r, dict)] if m else []
+
+    flows: List[Dict[str, Any]] = []
+    for site in load_sites:
+        fn = site.function
+        pre = [c for c in calls_of(site.module, "preprocess") if str(c.get("in") or "") == fn]
+        infer = [i for i in infer_sites if i["module"] == site.module and str(i.get("function") or "") == fn]
+        post = [c for c in calls_of(site.module, "postprocess") if str(c.get("in") or "") == fn]
+        missing = [label for label, present in (("preprocessing", pre), ("inference", infer), ("postprocessing", post)) if not present]
+        flows.append({
+            "module": site.module, "function": fn or "<module>", "load": site.call, "framework": site.framework,
+            "model_id": site.model_id,
+            "preprocessing": [str(c.get("call") or "")[:80] for c in pre[:6]],
+            "inference": [str(i.get("call") or "")[:80] for i in infer[:6]],
+            "postprocessing": [str(c.get("call") or "")[:80] for c in post[:6]],
+            "missing": missing,
+            "complete": not missing,
+        })
+    return flows[:MAX_FACTS]
+
+
+def _processor_discovery(modules: List[ModuleRef], load_sites: List[LoadSite]) -> List[Dict[str, Any]]:
+    """Processor/tokenizer/feature-extractor discovery: what the code actually builds to prepare model inputs.
+
+    Recorded from the imports and the constructing calls the AST saw (a ``from transformers import AutoTokenizer``, an
+    ``AutoProcessor.from_pretrained(...)``). Nothing is inferred from the model name: only names the code really contains."""
+    rx = re.compile(r"tokenizer|processor|imageprocessor|featureextractor|image_processor|feature_extractor", re.I)
+    found: List[Dict[str, Any]] = []
+    seen: Set[str] = set()
+    for m in modules:
+        for imp in m.facts.get("imports") or []:
+            if not isinstance(imp, dict):
+                continue
+            module = str(imp.get("module") or "")
+            for name in (module.split(",") if module else []) + list(imp.get("names") or []):
+                name = str(name).strip()
+                if rx.search(name) and name not in seen:
+                    seen.add(name)
+                    found.append({"kind": "import", "name": name, "module": m.module, "line": int(imp.get("line") or 0)})
+        for role in ("load", "preprocess"):
+            for row in (m.facts.get("calls") or {}).get(role) or []:
+                if not isinstance(row, dict):
+                    continue
+                call = str(row.get("call") or "")
+                if rx.search(call) and call not in seen:
+                    seen.add(call)
+                    found.append({"kind": "call", "name": call, "module": m.module, "line": int(row.get("line") or 0)})
+    for site in load_sites:
+        if rx.search(site.call) and site.call not in seen:
+            seen.add(site.call)
+            found.append({"kind": "load", "name": site.call, "module": site.module, "line": site.line})
+    return found[:MAX_FACTS]
 
 
 # --------------------------------------------------------------------------- I/O contract
@@ -486,6 +550,8 @@ def _io_contract(modules: List[ModuleRef], load_sites: List[LoadSite], infer_sit
         "model_ids": sorted({s.model_id for s in load_sites if s.model_id}),
         "device_hints": sorted({str(d) for m in modules for d in (m.facts.get("device_hints") or [])}),
         "dtype_hints": sorted({str(d) for m in modules for d in (m.facts.get("dtype_hints") or [])}),
+        "inference_flow": _inference_flow(modules, load_sites, infer_sites),
+        "processors": _processor_discovery(modules, load_sites),
         "unknown": unknown,
         "contract_verified": bool(inputs and outputs),
     }

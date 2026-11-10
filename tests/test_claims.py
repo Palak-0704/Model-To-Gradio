@@ -180,6 +180,39 @@ class TestReaRefs(unittest.TestCase):
         self.assertEqual(claims["rea_evidence"].status, C.UNKNOWN)
         self.assertEqual(claims["rea_investigation"].status, C.UNKNOWN)
 
+    def test_a_partial_rea_parameter_sum_is_a_lower_bound_not_the_total(self):
+        # REA read 1 of 5 shards: its sum (200k) is a LOWER BOUND. It must never be presented as the total, so the Python figure
+        # (1,000,000) stays SUPPORTED and the partial sum becomes its own explicit lower-bound claim.
+        a = self._a({"status": "partial", "shards_total": 5, "shards_inspected": 1,
+                     "header_summaries": [{"file": "model-00001-of-00005.safetensors", "format": "safetensors", "parameters": 200}],
+                     "calls": [{"tool": "inspect_model_artifact", "ok": True, "target": "model-00001-of-00005.safetensors", "output": "ok"}]})
+        claims = {c.field: c for c in C.build_claims(a)}
+        self.assertEqual(claims["parameter_count"].value, 1000)
+        self.assertEqual(claims["parameter_count"].status, C.SUPPORTED)  # NOT conflicted by the partial sum
+        self.assertEqual(claims["parameter_count"].contradicting, [])
+        self.assertEqual(claims["parameter_count_lower_bound"].value, 200)
+        self.assertEqual(claims["parameter_count_lower_bound"].status, C.VERIFIED)
+        self.assertTrue(any("lower bound" in x for x in claims["parameter_count_lower_bound"].limitations))
+
+    def test_a_partial_rea_sum_exceeding_python_is_flagged_as_a_gap(self):
+        # The partial header sum already exceeds the Python figure: that cannot be a complete total, so the total is recorded as
+        # unknown rather than silently accepted or contradicted.
+        a = self._a({"status": "partial", "shards_total": 5, "shards_inspected": 1,
+                     "header_summaries": [{"file": "shard-1.safetensors", "format": "safetensors", "parameters": 2000}],
+                     "calls": [{"tool": "inspect_model_artifact", "ok": True, "target": "shard-1.safetensors", "output": "ok"}]})
+        claims = {c.field: c for c in C.build_claims(a)}
+        self.assertEqual(claims["parameter_count"].value, 1000)
+        self.assertEqual(claims["parameter_count"].contradicting, [])
+        self.assertTrue(any("exceeds the Python figure" in u for u in claims["parameter_count_lower_bound"].unknowns))
+
+    def test_a_complete_rea_sum_still_corroborates_the_total(self):
+        a = self._a({"status": "completed", "shards_total": 1, "shards_inspected": 1,
+                     "header_summaries": [{"file": "model.safetensors", "format": "safetensors", "parameters": 1000}],
+                     "calls": [{"tool": "inspect_model_artifact", "ok": True, "target": "model.safetensors", "output": "ok"}]})
+        claims = {c.field: c for c in C.build_claims(a)}
+        self.assertEqual(claims["parameter_count"].status, C.VERIFIED)
+        self.assertIn("rea:params:total", claims["parameter_count"].supporting)
+
 
 if __name__ == "__main__":
     unittest.main()

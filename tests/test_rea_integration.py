@@ -115,10 +115,11 @@ class Base(unittest.TestCase):
     def server_file_facts(self):
         return [json.loads(line) for line in self.log.read_text(encoding="utf-8").splitlines() if '"file_existed"' in line]
 
-    def run_rea(self, files=(("config.json", 5), ("model.safetensors", SIZE)), web_=None, factory=None, info=None):
+    def run_rea(self, files=(("config.json", 5), ("model.safetensors", SIZE)), web_=None, factory=None, info=None,
+                settings=None):
         web_ = web_ or RangeWeb()
         fetcher = SafeFetcher(Settings(), resolver=PUBLIC, transport=web_)
-        report = rc.run_rea_inspection(info or hf_info(files), fetcher, Settings(), command=CMD, project_dir=self.tmp,
+        report = rc.run_rea_inspection(info or hf_info(files), fetcher, settings or Settings(), command=CMD, project_dir=self.tmp,
                                        client_factory=factory)
         return report, web_
 
@@ -243,12 +244,22 @@ class TestRunInspection(Base):
         header_end = 8 + int.from_bytes(web_.blob[:8], "little")
         self.assertLess(max(b for _, b in web_.ranges), header_end, "no tensor byte may be requested")
 
-    def test_many_shards_are_partial(self):
+    def test_many_shards_within_the_limit_are_all_inspected(self):
+        # The shard set is discovered dynamically and, within the default resource ceiling, every discoverable shard is read.
         files = [(f"model-0000{i}-of-00005.safetensors", SIZE) for i in range(1, 6)]
         report, _ = self.run_rea(files=files)
+        self.assertEqual(report.status, rc.COMPLETED)
+        self.assertEqual([c["tool"] for c in self.server_calls()], ["binary_session"] + ["inspect_model_artifact"] * 5)
+        self.assertEqual((report.shards_inspected, report.shards_total), (5, 5))
+
+    def test_a_low_configured_limit_reports_partial_coverage_honestly(self):
+        # A resource ceiling below the discovered shard count leaves the model only partly inspected; the report says so.
+        files = [(f"model-0000{i}-of-00005.safetensors", SIZE) for i in range(1, 6)]
+        report, _ = self.run_rea(files=files, settings=Settings(rea_max_shards=3))
         self.assertEqual(report.status, rc.PARTIAL)
-        self.assertEqual([c["tool"] for c in self.server_calls()], ["binary_session"] + ["inspect_model_artifact"] * rc.MAX_SHARDS)
-        self.assertEqual((report.shards_inspected, report.shards_total), (rc.MAX_SHARDS, 5))
+        self.assertEqual([c["tool"] for c in self.server_calls()], ["binary_session"] + ["inspect_model_artifact"] * 3)
+        self.assertEqual((report.shards_inspected, report.shards_total), (3, 5))
+        self.assertIn("only the first 3 of 5 discovered weight file(s)", report.reason)
 
     def test_not_invoked_report_claims_nothing(self):
         report = rc.not_invoked()

@@ -135,6 +135,57 @@ class TestIOContract(unittest.TestCase):
         src = analyse([("m.py", code)])
         self.assertTrue(any(i["modality"] == "image" for i in src.io_contract["inputs"]), src.io_contract["inputs"])
 
+    def test_cross_file_inference_flow_is_reconstructed(self):
+        # A `predict` method that loads the model, tokenizes, calls the model and post-processes: the flow is rebuilt from the
+        # enclosing function of each call, cross-file, and reported as complete.
+        code = (
+            "import torch\n"
+            "from transformers import AutoModelForSequenceClassification, AutoTokenizer\n"
+            "class M:\n"
+            "    def predict(self, text):\n"
+            "        tok = AutoTokenizer.from_pretrained('x')\n"
+            "        enc = tok(text, return_tensors='pt')\n"
+            "        model = AutoModelForSequenceClassification.from_pretrained('x')\n"
+            "        out = model(**enc)\n"
+            "        return torch.softmax(out.logits, dim=-1)\n"
+        )
+        src = analyse([("m.py", code)])
+        flows = src.io_contract["inference_flow"]
+        self.assertTrue(flows, "a loading site in a predict function must produce an inference flow")
+        flow = flows[0]
+        self.assertEqual(flow["function"], "M.predict")
+        self.assertTrue(flow["inference"], flow)
+        self.assertNotIn("inference", flow["missing"])
+
+    def test_inference_flow_reports_missing_steps_not_invents_them(self):
+        # The loading site's function has no preprocessing or inference call: those are recorded as missing, never fabricated.
+        code = (
+            "from transformers import AutoModel\n"
+            "def load():\n"
+            "    return AutoModel.from_pretrained('x')\n"
+        )
+        src = analyse([("m.py", code)])
+        flows = src.io_contract["inference_flow"]
+        self.assertTrue(flows)
+        self.assertFalse(flows[0]["complete"])
+        self.assertIn("inference", flows[0]["missing"])
+        self.assertIn("preprocessing", flows[0]["missing"])
+
+    def test_processor_and_tokenizer_discovery_from_real_code(self):
+        code = (
+            "from transformers import AutoTokenizer, AutoProcessor\n"
+            "def build():\n"
+            "    return AutoProcessor.from_pretrained('x')\n"
+        )
+        src = analyse([("m.py", code)])
+        names = {p["name"] for p in src.io_contract["processors"]}
+        self.assertIn("AutoTokenizer", names)
+        self.assertIn("AutoProcessor", names)
+
+    def test_processor_discovery_invents_nothing_when_absent(self):
+        src = analyse([("m.py", "import torch\n")])
+        self.assertEqual(src.io_contract["processors"], [])
+
 
 class TestRobustnessAndSafety(unittest.TestCase):
     def test_syntax_error_is_skipped_not_fatal(self):

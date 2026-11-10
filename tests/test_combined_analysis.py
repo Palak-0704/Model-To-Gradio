@@ -105,6 +105,15 @@ class TestBuildCombinedAnalysis(unittest.TestCase):
         self.assertEqual(report["parameter_comparison"]["verdict"], "conflict")
         self.assertIn("only part of the files", report["conflicts"][0]["detail"])
 
+    def test_a_completed_status_with_fewer_files_than_discovered_is_not_complete_coverage(self):
+        # Coverage is derived from the COUNTS, not the status word: a 'completed' report that inspected fewer files than were
+        # discovered is partial, so its parameter sum is never presented as covering the whole model.
+        rea = rea_dict("completed", params=(1_000,), shards_total=3, shards_inspected=1)
+        report = build_combined_analysis(make_analysis(params=50_000, rea=rea))
+        self.assertEqual(report["rea_analysis"]["coverage"], "partial")
+        self.assertEqual(report["confidence"]["rea_coverage"], "partial")
+        self.assertEqual(report["parameter_comparison"]["verdict"], "not_comparable")
+
     def test_rea_failed_keeps_the_python_result_and_says_so(self):
         failed = {"status": "failed", "reason": "REA refused the file", "calls": [{"tool": "inspect_model_artifact", "ok": False,
                                                                                     "target": "m.safetensors", "error": "refused"}],

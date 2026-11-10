@@ -382,7 +382,9 @@ class TestAdaptiveInvestigationIntegration(Base):
         self.set_mode("churn")
         report, _ = self.run_rea(settings=Settings(rea_max_investigation_calls=3))
         self.assertEqual(report.status, rc.COMPLETED)
-        self.assertEqual(report.stop_reason, "the investigation resource budget was spent")
+        self.assertEqual(report.stop_reason, "the investigation call budget was spent")
+        self.assertTrue(report.budget["exhausted"]["calls"])  # a budget exhaustion, not a tool failure
+        self.assertFalse(report.budget["exhausted"]["failures"])
         self.assertEqual(report.budget["calls_made"], 3)
         self.assertLessEqual(report.budget["calls_made"], 3)  # bounded, never a spin
 
@@ -390,7 +392,7 @@ class TestAdaptiveInvestigationIntegration(Base):
         self.set_mode("long_chain")
         report, _ = self.run_rea(settings=Settings(rea_max_investigation_calls=16))
         self.assertEqual(report.status, rc.COMPLETED)
-        self.assertEqual(report.stop_reason, "the investigation resource budget was spent")
+        self.assertEqual(report.stop_reason, "the investigation call budget was spent")
         self.assertEqual(report.budget["calls_made"], 16)
         self.assertGreaterEqual(len([c for c in self.server_calls() if c["tool"] == "inspect_analysis_view"]), 12)
 

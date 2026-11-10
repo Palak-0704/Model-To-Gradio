@@ -128,6 +128,26 @@ def _kwargs(node: ast.Call, limit: int = 8) -> Dict[str, Any]:
     return {k.arg: _lit(k.value) for k in node.keywords[:limit] if k.arg}
 
 
+def _enclosing_functions(tree: ast.AST) -> Dict[int, str]:
+    """Map every node id to the name of the innermost function/class it lives in (``pkg.func``/``Cls.method``-style qualified
+    name). This is what lets a call be attributed to the function that performs it, so a load, an inference call and their
+    preprocessing/postprocessing can be related across a module without executing anything."""
+    out: Dict[int, str] = {}
+
+    def visit(node: ast.AST, prefix: str) -> None:
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                name = f"{prefix}.{child.name}" if prefix else child.name
+                out[id(child)] = name
+                visit(child, name)
+            else:
+                out[id(child)] = prefix
+                visit(child, prefix)
+
+    visit(tree, "")
+    return out
+
+
 def analyze_python(text: str) -> Dict[str, Any]:
     """AST summary of one module: imports, classes, functions, load/inference/pre/post-processing calls with literal arguments, CLI
     arguments, UI components, environment variable NAMES, external services, device/dtype hints. Nothing is executed."""
@@ -138,6 +158,7 @@ def analyze_python(text: str) -> Dict[str, Any]:
     f: Dict[str, Any] = {"imports": [], "classes": [], "functions": [], "calls": {"load": [], "infer": [], "preprocess": [], "postprocess": []},
                          "env_vars": [], "cli_args": [], "ui": [], "trust_remote_code_lines": [], "device_hints": [], "dtype_hints": [],
                          "external_services": [], "lines": text.count("\n") + 1}
+    enclosing = _enclosing_functions(tree)
     tops, devices, dtypes, envs, services = set(), set(), set(), set(), set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
@@ -172,7 +193,7 @@ def analyze_python(text: str) -> Dict[str, Any]:
             name = _dotted(node.func) or (node.func.attr if isinstance(node.func, ast.Attribute) else "")
             kw = _kwargs(node)
             first = [_lit(x) for x in node.args[:2]]
-            rec = {"call": name[:120], "line": node.lineno, "args": first, "kwargs": kw}
+            rec = {"call": name[:120], "line": node.lineno, "args": first, "kwargs": kw, "in": enclosing.get(id(node), "")}
             if kw.get("trust_remote_code") is True:
                 f["trust_remote_code_lines"].append(node.lineno)
             recv = name.rsplit(".", 1)[0].lower() if "." in name else ""

@@ -252,6 +252,28 @@ class TestGitHub(unittest.TestCase):
         self.assertTrue(all("source" in row and "finding" in row and "provenance" in row for row in result.evidence_ledger))
         self.assertIn("repository", result.investigation_coverage)
 
+    def test_evidence_ledger_rows_carry_a_normalized_evidence_class(self):
+        # Every ledger row is labelled with one of the five honest classes, and the coverage tally adds up to the row count: an
+        # inference can never be read as an observation, and a recorded gap is never counted as a finding.
+        from m2g.analyzer import _EVIDENCE_CLASSES
+        web = FakeWeb()
+        add_github_repo(web, "acme/ledger", tree=["README.md", "requirements.txt", "pkg/model.py"],
+                        extra_files={"pkg/model.py": "import torch\nclass Model: pass\n"})
+        result = an.analyze(ins.inspect_url("https://github.com/acme/ledger", web.fetcher()))
+        self.assertTrue(result.evidence_ledger)
+        self.assertTrue(all(row.get("evidence_class") in _EVIDENCE_CLASSES for row in result.evidence_ledger))
+        tally = result.investigation_coverage["evidence_classes"]
+        self.assertEqual(sum(tally.values()), len(result.evidence_ledger))
+        self.assertEqual(set(tally), set(_EVIDENCE_CLASSES))
+
+    def test_a_rea_finding_is_classified_as_rea_not_metadata(self):
+        from m2g.analyzer import _evidence_class
+        self.assertEqual(_evidence_class("REA", "REA"), "rea")
+        self.assertEqual(_evidence_class("authoritative"), "metadata")
+        self.assertEqual(_evidence_class("structural"), "source")
+        self.assertEqual(_evidence_class("heuristic"), "inferred")
+        self.assertEqual(_evidence_class("unknown"), "unknown")
+
 
 FLAMINGO_README = (
     "# Flamingo Mini\n"
