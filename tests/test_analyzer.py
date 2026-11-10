@@ -242,6 +242,16 @@ class TestGitHub(unittest.TestCase):
         import json
         json.dumps(analyze_preset("sst2").to_dict())
 
+    def test_repository_evidence_ledger_preserves_provenance_and_coverage(self):
+        web = FakeWeb()
+        add_github_repo(web, "acme/ledger", tree=["README.md", "requirements.txt", "pkg/model.py"],
+                        extra_files={"pkg/model.py": "import torch\nclass Model: pass\n"})
+        info = ins.inspect_url("https://github.com/acme/ledger", web.fetcher())
+        result = an.analyze(info)
+        self.assertTrue(result.evidence_ledger)
+        self.assertTrue(all("source" in row and "finding" in row and "provenance" in row for row in result.evidence_ledger))
+        self.assertIn("repository", result.investigation_coverage)
+
 
 FLAMINGO_README = (
     "# Flamingo Mini\n"

@@ -219,6 +219,9 @@ class Analysis:
     # Digest of the Phase 1 evidence collection (m2g.evidence_bridge.build_evidence_digest): per-item status, provenance and errors,
     # tensor-header summaries, limitations and which metadata fields were filled from evidence. None when collection did not run.
     evidence: Optional[Dict[str, Any]] = None
+    # Single provenance-preserving ledger for repository, analyzer, and REA facts.
+    evidence_ledger: List[Dict[str, Any]] = field(default_factory=list)
+    investigation_coverage: Dict[str, Any] = field(default_factory=dict)
     # Where the model comes from: "huggingface" (a Hub model analysed directly), "github-linked-hf" (a GitHub repository generated through its
     # own linked Hugging Face model) or "github-native" (an AI model repository on GitHub that stands on its own evidence; no Hugging Face
     # model is needed or invented, and ``model_source`` stays None).
@@ -1423,6 +1426,13 @@ def _apply_rea(a: Analysis, info: RepoInfo) -> None:
         return
     data = rep.to_dict() if hasattr(rep, "to_dict") else dict(rep)
     a.rea = data
+    a.investigation_coverage["rea"] = {"status": data.get("status"), "inspected": data.get("shards_inspected", 0),
+                                         "total": data.get("shards_total", 0), "stop_reason": data.get("stop_reason", "")}
+    for call in data.get("calls") or []:
+        if isinstance(call, dict) and call.get("ok"):
+            a.evidence_ledger.append({"source": str(call.get("target") or "REA"), "location": str(call.get("tool") or ""),
+                                      "finding": str(call.get("output") or "REA observation")[:500], "provenance": "REA",
+                                      "confidence": 0.8})
     status = str(data.get("status"))
     if status in ("failed", "partial"):
         a.warnings.append(f"REA inspection {status}: {data.get('reason', '')}"[:400])
@@ -1712,6 +1722,34 @@ def _attach_combined(a: Analysis) -> None:
                                "error": f"The combined report could not be built ({type(exc).__name__}); the Python analysis is unaffected."}
 
 
+def _attach_evidence_ledger(a: Analysis, info: RepoInfo) -> None:
+    """Normalize all analysis inputs into a deduplicated, source-preserving ledger."""
+    rows: List[Dict[str, Any]] = [dict(x) for x in getattr(info, "evidence_ledger", []) if isinstance(x, dict)]
+    for e in a.task_evidence:
+        rows.append({"source": e.source, "location": e.signal, "finding": e.detail, "provenance": e.tier,
+                     "confidence": e.weight, "task": e.task})
+    for gap in getattr(info, "inspection_gaps", []):
+        if isinstance(gap, dict):
+            rows.append({"source": "repository inspection", "location": gap.get("code", "unknown"),
+                         "finding": gap.get("message", "unavailable"), "provenance": "unknown", "confidence": 0.0})
+    # Merge identical findings while retaining every distinct source/location.
+    merged: Dict[Tuple[str, str], Dict[str, Any]] = {}
+    for row in rows:
+        finding, provenance = str(row.get("finding", "")), str(row.get("provenance", ""))
+        key = (finding, provenance)
+        if key not in merged:
+            merged[key] = row
+        else:
+            prior = merged[key]
+            sources = prior.setdefault("sources", [prior.get("source")])
+            source = row.get("source")
+            if source not in sources:
+                sources.append(source)
+            prior["confidence"] = max(float(prior.get("confidence", 0) or 0), float(row.get("confidence", 0) or 0))
+    a.evidence_ledger = list(merged.values())
+    a.investigation_coverage["repository"] = dict(getattr(info, "inspection_coverage", {}) or {})
+
+
 def analyze(info: RepoInfo, settings: Optional[Settings] = None) -> Analysis:
     a = analyze_github(info, settings) if info.source.kind == "github" else analyze_hf(info, settings)
     ctx = getattr(info, "evidence", None)  # collected before analysis (see pipeline); the metadata gaps it filled were already analysed
@@ -1727,6 +1765,7 @@ def analyze(info: RepoInfo, settings: Optional[Settings] = None) -> Analysis:
         a.warnings.append(f"The REA result could not be merged into the analysis ({type(exc).__name__}); the Python analysis is unaffected.")
         if a.status == "supported":
             a.status = "supported_with_warnings"
+    _attach_evidence_ledger(a, info)
     _attach_combined(a)
     return a
 

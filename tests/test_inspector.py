@@ -2,6 +2,7 @@ import unittest
 
 from m2g import inspector as ins
 from m2g import security as sec
+from m2g.config import Settings
 from fakehub import FakeWeb, hf, add_github_repo, PRESETS, SHA
 
 
@@ -108,6 +109,20 @@ class TestGitHub(unittest.TestCase):
         info = ins.inspect_url("https://github.com/acme/pkg", web.fetcher())
         self.assertEqual([r["name"] for r in info.requirements], ["torch", "pillow"])
         self.assertTrue(any("not executed" in w for w in info.warnings))
+
+    def test_large_repository_uses_configurable_source_budget_and_reports_coverage(self):
+        web = FakeWeb()
+        tree = [f"pkg/model_{n}.py" for n in range(12)] + ["pkg/huge.py"]
+        extra = {p: "import torch\ndef predict(x): return x\n" for p in tree if p != "pkg/huge.py"}
+        add_github_repo(web, "acme/large", tree=tree, extra_files=extra)
+        # The fake tree reports size=100, so a tiny byte budget stops after one file.
+        info = ins.inspect_url("https://github.com/acme/large", web.fetcher(),
+                               Settings(github_max_source_files=20, github_max_source_bytes=60, github_max_source_file_bytes=1000))
+        coverage = info.inspection_coverage
+        self.assertTrue(coverage["inspected"])
+        self.assertTrue(coverage["remaining"])
+        self.assertIn("budget", coverage)
+        self.assertTrue(info.evidence_ledger)
 
 
 class TestRequirementsParser(unittest.TestCase):
