@@ -5,7 +5,7 @@ the real REA 6.8.0 ones for the tools the platform may call, plus decoys the cli
 appended to the JSON-lines file named by FAKE_REA_LOG, so a test can prove which tools were REALLY executed and with what arguments.
 
 FAKE_REA_MODE: ok | tool_error | crash | hang | no_model_tool | view | view_error | no_view_tool | gguf_bad
-                | capabilities | dynamic | reveal | answer | entropy_error | churn
+                | capabilities | dynamic | reveal | answer | entropy_error | churn | long_chain
   view       the model-inspection result advertises a retained parent_evidence_id, so the client pages it with inspect_analysis_view
   view_error the parent id is advertised but the view call fails (it must stay optional and never change the verdict)
   no_view_tool  the server does not advertise inspect_analysis_view at all
@@ -21,6 +21,8 @@ FAKE_REA_MODE: ok | tool_error | crash | hang | no_model_tool | view | view_erro
   entropy_error the entropy tool fails (isError): the failure must be recorded and must never change the stage verdict
   churn      like capabilities, but the entropy result reveals a NEW retained Evidence id EVERY call, so the paging question never
              dries up: the loop must still terminate on the call budget, not spin forever
+  long_chain like capabilities, but every retained-Evidence page reveals another page.  This exercises investigations beyond
+             the old twelve-round ceiling; the configurable call budget remains the only cost guard.
 """
 import json
 import math
@@ -75,7 +77,7 @@ CAPABILITY_TOOLS = [
 ]
 if MODE == "capabilities":
     TOOLS = TOOLS + CAPABILITY_TOOLS
-if MODE in ("dynamic", "reveal", "answer", "entropy_error", "churn"):
+if MODE in ("dynamic", "reveal", "answer", "entropy_error", "churn", "long_chain"):
     # like "capabilities", but the entropy capability may be advertised under a different name
     tools = [t for t in CAPABILITY_TOOLS if t["name"] != "inspect_byte_entropy"]
     if MODE == "dynamic":
@@ -160,7 +162,7 @@ def call(name, args):
         if is_err:
             return {"isError": True, "content": [{"type": "text", "text": text}]}
         body = json.loads(text)
-        if MODE in ("view", "view_error", "capabilities", "dynamic", "reveal", "answer", "entropy_error", "churn"):
+        if MODE in ("view", "view_error", "capabilities", "dynamic", "reveal", "answer", "entropy_error", "churn", "long_chain"):
             body = {"normalized_result": {"parent_evidence_id": PARENT, "summary": body}, "confidence": "derived"}
         return {"content": [{"type": "text", "text": json.dumps(body)}]}
     if name in ("inspect_byte_entropy", "inspect_byte_entropy_v2"):
@@ -197,7 +199,10 @@ def call(name, args):
         if MODE == "view_error":
             return {"isError": True, "content": [{"type": "text", "text": "view unavailable"}]}
         src = args.get("source") or {}
-        if MODE == "answer":  # the page returns the architecture, which answers the architecture question
+        if MODE == "long_chain":
+            rows = {"kind": "summary", "collection": "metadata", "parent_evidence_id": src.get("evidence_id"),
+                    "retained_evidence_id": "ev_" + ("%064x" % time.time_ns()), "rows": []}
+        elif MODE == "answer":  # the page returns the architecture, which answers the architecture question
             rows = {"kind": "summary", "collection": "metadata", "parent_evidence_id": src.get("evidence_id"),
                     "architecture": "llama", "format": "gguf",
                     "rows": [{"key": "general.architecture", "value": "llama"}]}

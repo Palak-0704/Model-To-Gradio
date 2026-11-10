@@ -117,7 +117,6 @@ MAX_OUTPUT_CHARS = 8_000  # stored per tool result
 MAX_INVESTIGATION_CALLS = 40  # adaptive-loop safety ceiling (a runaway guard, not a tool allow-list)
 MAX_INVESTIGATION_SECONDS = 120.0  # adaptive-loop wall-clock budget
 MAX_INVESTIGATION_FAILURES = 5  # stop after this many failed optional calls
-MAX_INVESTIGATION_ROUNDS = 12  # hard backstop against a pathological planner; the loop normally stops on "no progress"
 INIT_TIMEOUT_S = 90.0
 CALL_TIMEOUT_S = 120.0
 SCRATCH_SUBDIR = (".m2g", "rea")  # inside the project; ``.m2g/`` is already git-ignored
@@ -1095,6 +1094,7 @@ def _evidence_state(rep: ReaReport, files: List[Tuple[str, Path]], *, header_ok:
         header_ok=header_ok,
         coverage_partial=partial,
         capabilities=dict(rep.capabilities_by_tag or tag_tools(rep._tools, rep._policy)),
+        tools=rep._tools,
     )
 
 
@@ -1106,7 +1106,7 @@ def _adaptive_investigation(rep: ReaReport, client: ReaMcpClient, files: List[Tu
     execute -> fold the results back into the evidence state -> replan. It continues while open questions remain answerable and a
     step keeps producing new evidence; it stops when the questions are exhausted, no eligible capability answers them, a step
     yields nothing new, the same call would repeat, failures pass the retry budget, or the call/time budget is spent. There is no
-    fixed round limit; ``MAX_INVESTIGATION_ROUNDS`` is only a backstop against a pathological planner.
+    investigation-round limit: the configurable call/time/failure budgets are the runaway protection.
 
     Every call here is OPTIONAL: a refused or failing call is recorded and noted but never changes the stage's verdict, which the
     core header inspection already set."""
@@ -1116,19 +1116,21 @@ def _adaptive_investigation(rep: ReaReport, client: ReaMcpClient, files: List[Tu
     seen: Set[Tuple[str, str]] = set()
     made = failures = 0
     stop = "the open questions were exhausted"
-    for _round in range(MAX_INVESTIGATION_ROUNDS):
+    round_number = 0
+    while True:
         questions = generate_questions(state)
         rep.questions = [{"qid": q.qid, "kind": q.kind, "target": q.target, "text": q.text} for q in questions]
-        plan = filter_plan(plan_questions(state, questions, client.policy), client.tools, client.policy)
+        plan = filter_plan(plan_questions(state, questions, client.policy, client.tools), client.tools, client.policy)
         plan = [pc for pc in plan if (pc.tool, pc.target) not in seen]  # duplicate-call prevention
         if not plan:
-            stop = ("no further eligible capability call could answer the remaining questions" if questions
+            stop = ("the answerable investigation questions were exhausted; no further eligible capability call could answer the remaining questions" if questions
                     else "the open questions were exhausted")
             break
         if budget.exhausted(made, failures):
             stop = "the investigation resource budget was spent"
             break
-        rep.note(f"Investigation round {_round + 1}: {len(plan)} call(s) planned for {len(questions)} open question(s).")
+        round_number += 1
+        rep.note(f"Investigation round {round_number}: {len(plan)} call(s) planned for {len(questions)} open question(s).")
         before = state_signature(state)
         for pc in plan:
             if budget.exhausted(made, failures):
@@ -1156,8 +1158,6 @@ def _adaptive_investigation(rep: ReaReport, client: ReaMcpClient, files: List[Tu
         if state_signature(state) == before:
             stop = "no further call produced new evidence"
             break
-    else:
-        stop = "the investigation reached its backstop round limit"
     rep.stop_reason = stop
     rep.budget = {**budget.as_dict(), "calls_made": made, "failures": failures}
     rep.note(f"Adaptive investigation made {made} optional call(s), {failures} failure(s); stopped because {stop}.")

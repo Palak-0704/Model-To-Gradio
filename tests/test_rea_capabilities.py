@@ -169,6 +169,28 @@ class TestQuestionPlanning(unittest.TestCase):
                                    formats={"m.safetensors": "safetensors"})
         self.assertEqual(caps.plan_questions(state, caps.generate_questions(state), caps.CapabilityPolicy()), [])
 
+    def test_unknown_capability_is_selected_from_its_description_and_schema(self):
+        # This tool is intentionally absent from CAPABILITIES.  Its advertised
+        # description/schema, not a new fixed category, make it relevant.
+        catalog = {"read_declared_architecture": {
+            "name": "read_declared_architecture",
+            "description": "Read declared model architecture metadata from a local header.",
+            "annotations": {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": False},
+            "inputSchema": {"type": "object", "properties": {"path": {"type": "string"},
+                                                              "offset": {"type": "integer"},
+                                                              "length": {"type": "integer"}}},
+        }}
+        state = caps.EvidenceState(tools=catalog, files=[("m.safetensors", "/tmp/m")],
+                                   header_bytes={"m.safetensors": 512}, formats={"m.safetensors": "safetensors"})
+        plan = caps.plan_questions(state, caps.generate_questions(state), tools=catalog)
+        self.assertEqual([p.tool for p in plan], ["read_declared_architecture"])
+
+    def test_invalid_required_schema_cannot_produce_a_call(self):
+        catalog = {"inspect_entropy": {"name": "inspect_entropy", "annotations": {"readOnlyHint": True},
+                                        "inputSchema": {"type": "object", "properties": {}, "required": ["path"]}}}
+        planned = [caps.PlannedCall("inspect_entropy", {"path": "/tmp/m"}, "m", "x")]
+        self.assertEqual(caps.filter_plan(planned, catalog), [])
+
 
 class TestObservationFolding(unittest.TestCase):
     """A successful call's output is folded back into the evidence state so the next round sees the new facts."""
@@ -209,6 +231,21 @@ class TestObservationFolding(unittest.TestCase):
         self.assertNotIn("safetensors", state.formats.values())
         self.assertNotIn("m.safetensors", state.architectures)
         self.assertEqual(state.retained_ids, {})
+
+    def test_empty_success_output_makes_no_progress(self):
+        state = _state()
+        before = caps.state_signature(state)
+        self.assertEqual(caps.observe(state, "residual_unknowns", "session", ""), set())
+        self.assertEqual(caps.state_signature(state), before)
+
+
+class TestBudget(unittest.TestCase):
+    def test_time_budget_is_configurable_and_exhausts(self):
+        now = [10.0]
+        budget = caps.Budget(max_calls=99, max_seconds=2.0, max_failures=99, clock=lambda: now[0], started=10.0)
+        self.assertFalse(budget.time_exhausted())
+        now[0] = 12.0
+        self.assertTrue(budget.time_exhausted())
 
 
 class TestRealCatalogDrivesSelection(unittest.TestCase):
@@ -348,6 +385,14 @@ class TestAdaptiveInvestigationIntegration(Base):
         self.assertEqual(report.stop_reason, "the investigation resource budget was spent")
         self.assertEqual(report.budget["calls_made"], 3)
         self.assertLessEqual(report.budget["calls_made"], 3)  # bounded, never a spin
+
+    def test_useful_evidence_can_continue_past_twelve_rounds(self):
+        self.set_mode("long_chain")
+        report, _ = self.run_rea(settings=Settings(rea_max_investigation_calls=16))
+        self.assertEqual(report.status, rc.COMPLETED)
+        self.assertEqual(report.stop_reason, "the investigation resource budget was spent")
+        self.assertEqual(report.budget["calls_made"], 16)
+        self.assertGreaterEqual(len([c for c in self.server_calls() if c["tool"] == "inspect_analysis_view"]), 12)
 
     def test_no_capability_means_the_loop_stops_immediately(self):
         self.set_mode("ok")  # only the core tools are advertised; nothing optional can be planned
