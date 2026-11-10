@@ -662,6 +662,9 @@ def _rea_facts(a: Analysis) -> Dict[str, Any]:
         "reason": rea.get("reason"),
         "server": server,
         "tools_executed": [c.get("tool") for c in calls],
+        "capabilities_discovered": list(rea.get("capabilities") or [])[:40],
+        "investigation": [{"tool": i.get("tool"), "target": i.get("target"), "reason": i.get("reason"), "ok": i.get("ok")}
+                          for i in _dict_items(rea.get("investigation"))][:20],
         "files_inspected": [{"file": s.get("file"), "tensor_count": s.get("tensor_count"), "parameters": s.get("parameters"),
                              "dtypes": s.get("dtypes")} for s in summaries[:3]],
         "findings": [f for f in findings if isinstance(f, (str, int, float))][:6],

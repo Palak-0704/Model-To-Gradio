@@ -4,12 +4,16 @@ It speaks just enough of MCP for the platform's client: initialize, tools/list (
 the real REA 6.8.0 ones for the tools the platform may call, plus decoys the client must never call. Every tools/call is
 appended to the JSON-lines file named by FAKE_REA_LOG, so a test can prove which tools were REALLY executed and with what arguments.
 
-FAKE_REA_MODE: ok | tool_error | crash | hang | no_model_tool | view | view_error | no_view_tool | gguf_bad
+FAKE_REA_MODE: ok | tool_error | crash | hang | no_model_tool | view | view_error | no_view_tool | gguf_bad | capabilities
   view       the model-inspection result advertises a retained parent_evidence_id, so the client pages it with inspect_analysis_view
   view_error the parent id is advertised but the view call fails (it must stay optional and never change the verdict)
   no_view_tool  the server does not advertise inspect_analysis_view at all
+  capabilities  the server advertises the safe capability tools (entropy, unknowns, bundle) plus decoys; the client must select
+                the safe ones by policy and never call the decoys (open_binary is mutating, gdb_console is open-world,
+                record_unknown writes to the ledger)
 """
 import json
+import math
 import os
 import struct
 import sys
@@ -35,6 +39,32 @@ TOOLS = [
     {"name": "gdb_console", "description": "decoy", "inputSchema": {"type": "object", "properties": {"command": {"type": "string"}},
                                                                     "required": ["command"], "additionalProperties": False}},
 ]
+# Capability tools with the real REA 6.8.0 schemas (annotations included, since the policy reads them).
+CAPABILITY_TOOLS = [
+    {"name": "inspect_byte_entropy", "description": "Inspect Shannon byte entropy for one explicit local file offline.",
+     "annotations": {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": False},
+     "inputSchema": {"type": "object", "properties": {"path": {"type": "string"}, "block_size": {"type": "integer"},
+                                                       "offset": {"type": "integer"}, "length": {"type": "integer"},
+                                                       "detail": {"type": "string"}},
+                     "required": ["path"], "additionalProperties": False}},
+    {"name": "list_unknowns", "description": "List current residual-unknown heads in deterministic ID order.",
+     "annotations": {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": False},
+     "inputSchema": {"type": "object", "properties": {"status": {"type": "string"}, "severity": {"type": "string"},
+                                                       "domain": {"type": "string"}, "offset": {"type": "integer"},
+                                                       "limit": {"type": "integer"}}, "additionalProperties": False}},
+    {"name": "get_evidence_bundle", "description": "Return every retained Evidence record and residual unknown as a bundle.",
+     "annotations": {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": False},
+     "inputSchema": {"type": "object", "properties": {"detail": {"type": "string"}, "filters": {"type": "object"}},
+                     "additionalProperties": False}},
+    {"name": "record_unknown", "description": "decoy: writes to the unknown ledger (mutating)",
+     "annotations": {"readOnlyHint": False, "destructiveHint": False, "openWorldHint": False},
+     "inputSchema": {"type": "object", "properties": {"domain": {"type": "string"}}, "additionalProperties": False}},
+    {"name": "close_binary", "description": "decoy: mutating session close",
+     "annotations": {"readOnlyHint": False, "destructiveHint": True, "openWorldHint": False},
+     "inputSchema": {"type": "object", "properties": {"path": {"type": "string"}}, "additionalProperties": False}},
+]
+if MODE == "capabilities":
+    TOOLS = TOOLS + CAPABILITY_TOOLS
 if MODE == "no_model_tool":
     TOOLS = [t for t in TOOLS if t["name"] != "inspect_model_artifact"]
 if MODE == "no_view_tool":
@@ -108,9 +138,32 @@ def call(name, args):
         if is_err:
             return {"isError": True, "content": [{"type": "text", "text": text}]}
         body = json.loads(text)
-        if MODE in ("view", "view_error"):
+        if MODE in ("view", "view_error", "capabilities"):
             body = {"normalized_result": {"parent_evidence_id": PARENT, "summary": body}, "confidence": "derived"}
         return {"content": [{"type": "text", "text": json.dumps(body)}]}
+    if name == "inspect_byte_entropy":
+        path = args["path"]
+        length = int(args.get("length") or 0)
+        with open(path, "rb") as fh:  # never reads more than the caller bounded: a sparse hole is not streamed
+            data = fh.read(length) if length else fh.read(65536)
+        counts = [0] * 256
+        for b in data:
+            counts[b] += 1
+        total = max(len(data), 1)
+        ent = 0.0
+        for c in counts:
+            if c:
+                p = c / total
+                ent -= p * math.log2(p)
+        return {"content": [{"type": "text", "text": json.dumps({"file_bytes_read": len(data), "entropy": round(ent, 4)})}]}
+    if name == "list_unknowns":
+        return {"content": [{"type": "text", "text": json.dumps({"total": 1, "next_offset": None,
+                                                                  "unknowns": [{"unknown_id": "unk_" + "cd" * 32,
+                                                                                "status": "open", "severity": "low",
+                                                                                "domain": "model-artifact"}]})}]}
+    if name == "get_evidence_bundle":
+        return {"content": [{"type": "text", "text": json.dumps({"detail": args.get("detail", "complete"),
+                                                                  "evidence_count": 1, "unknown_count": 1})}]}
     if name == "inspect_analysis_view":
         if MODE == "view_error":
             return {"isError": True, "content": [{"type": "text", "text": "view unavailable"}]}
