@@ -1686,6 +1686,13 @@ def build_combined_analysis(a: Analysis) -> Dict[str, Any]:
 
     levels = {"agree": "corroborated", "conflict": "conflicting", "python_only": "python_only", "rea_only": "rea_only",
               "not_comparable": "unverified", "unknown": "unknown"}
+    conclusions = {"task": {"value": a.task, "confidence": a.task_confidence, "evidence": [e.source for e in a.task_evidence[:4]]},
+                   "frameworks": {"value": a.frameworks, "verification": "source/metadata evidence" if a.frameworks else "unknown"},
+                   "input_contract": {"value": a.inputs, "verification": "task mapping; source contract may be incomplete"},
+                   "output_contract": {"value": a.outputs, "verification": "task mapping; source contract may be incomplete"},
+                   "dependencies": {"value": a.dependencies, "evidence": a.dependency_evidence},
+                   "hardware": {"value": asdict(a.hardware), "verification": "advisory estimate"},
+                   "unknowns": list(a.uncertainties)}
     return {
         "schema_version": COMBINED_SCHEMA_VERSION,
         "python_analysis": {
@@ -1708,6 +1715,9 @@ def build_combined_analysis(a: Analysis) -> Dict[str, Any]:
         "confidence": {"task": a.task_confidence, "task_basis": "python_analyzer only",
                        "parameter_count": levels.get(comparison["verdict"], "unknown"), "rea_coverage": side["coverage"]},
         "evidence": evidence,
+        "evidence_ledger": a.evidence_ledger,
+        "investigation_coverage": a.investigation_coverage,
+        "validated_conclusions": conclusions,
         "warnings": list(dict.fromkeys(py_warnings[:8] + rea_warnings)),
         "uncertainties": list(dict.fromkeys(py_uncertainties[:6] + rea_uncertainties)),
         "recommendations": list(dict.fromkeys(recs)),

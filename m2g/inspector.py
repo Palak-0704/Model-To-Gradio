@@ -49,8 +49,9 @@ PICKLE_EXTS = (".bin", ".pt", ".pth", ".ckpt", ".pkl", ".pickle")
 SAFETENSORS_INDEX_SUFFIX = ".safetensors.index.json"
 PICKLE_INDEX_SUFFIXES = (".bin.index.json", ".pt.index.json", ".pth.index.json", ".ckpt.index.json")
 # The ONLY files ever fetched from a Hugging Face repo. Weight files can never be requested.
-HF_FETCH_ALLOWLIST = ("config.json", "model_index.json", "tokenizer_config.json", "adapter_config.json",
-                      "preprocessor_config.json", "generation_config.json", "README.md")
+HF_FETCH_ALLOWLIST = ("config.json", "model_index.json", "tokenizer_config.json", "tokenizer.json", "vocab.json", "merges.txt",
+                      "adapter_config.json", "preprocessor_config.json", "processor_config.json", "generation_config.json",
+                      "requirements.txt", "pyproject.toml", "README.md")
 GH_FETCH_CANDIDATES = ("requirements.txt", "pyproject.toml", "environment.yml", "setup.py", "setup.cfg")
 # Small JSON files of a GitHub repository that describe a model (file name -> RepoInfo attribute). They are read as text and parsed as data
 # only, never executed; the shallowest copy (at most one directory deep) of each name is used.
@@ -115,6 +116,7 @@ class RepoInfo:
     # preprocessor_config.json (parsed). It was already fetched (allow-listed) but discarded; it states the input a feature extractor /
     # image processor expects (sampling_rate, size, ...). Data only; nothing in it is executed.
     preprocessor_config: Optional[Dict[str, Any]] = None
+    processor_config: Optional[Dict[str, Any]] = None
     # ---- GitHub provenance (filled by _inspect_github; every field stays at its default for a Hugging Face repository)
     # The commit every GitHub file was read at; None when the revision could not be resolved to one (then files were read by branch name).
     commit_sha: Optional[str] = None
@@ -421,6 +423,7 @@ def scan_python_source(path: str, text: str) -> Optional[Dict[str, Any]]:
     local_imports: List[str] = []
     pretrained_ids: List[str] = []
     pretrained_classes: List[str] = []
+    calls: List[Dict[str, Any]] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.ClassDef) and len(classes) < _MAX_SCAN_ITEMS:
             classes[node.name] = [b for b in (_dotted(x) for x in node.bases) if b]
@@ -442,9 +445,16 @@ def scan_python_source(path: str, text: str) -> Optional[Dict[str, Any]]:
                 v = node.args[0].value
                 if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,95}/[A-Za-z0-9][A-Za-z0-9._-]{0,95}", v) and v not in pretrained_ids:
                     pretrained_ids.append(v)
+        elif isinstance(node, ast.Call) and len(calls) < _MAX_SCAN_ITEMS:
+            name, low = _call_name(node), _call_name(node).lower()
+            role = ("loading" if "load" in low else "inference" if any(x in low for x in ("predict", "infer", "generate", "forward"))
+                    else "preprocessing" if any(x in low for x in ("tokeniz", "preprocess", "transform"))
+                    else "postprocessing" if any(x in low for x in ("decode", "postprocess", "format")) else "")
+            if role:
+                calls.append({"name": name, "role": role, "line": getattr(node, "lineno", 0)})
     return {"path": path, "classes": classes, "defs": defs, "imports": sorted(set(imports)),
             "imported_names": imported_names[:_MAX_SCAN_ITEMS], "pretrained_ids": pretrained_ids[:10],
-            "pretrained_classes": pretrained_classes, "local_imports": sorted(set(local_imports))[:_MAX_SCAN_ITEMS]}
+            "pretrained_classes": pretrained_classes, "local_imports": sorted(set(local_imports))[:_MAX_SCAN_ITEMS], "calls": calls}
 
 
 # README context cues. A link is the repository's OWN model when it carries the repo's name/owner or sits next to wording like
@@ -549,15 +559,22 @@ def _inspect_hf(ref: SourceRef, fetcher: SafeFetcher, settings: Settings) -> Rep
     except SecurityError:
         pin = "main"
     sizes = dict(info.files)
-    for fname in HF_FETCH_ALLOWLIST:
+    inspected, skipped, inaccessible = [], [], []
+    # Metadata is read first; small Python modules are then selected from the
+    # advertised repository listing under the same configurable static budget.
+    hf_sources = [n for n, s in info.files if n.endswith(".py") and s is not None and s <= settings.github_max_source_file_bytes]
+    wanted_hf = list(HF_FETCH_ALLOWLIST) + sorted(hf_sources, key=lambda n: (n.count("/"), n))[:settings.github_max_source_files]
+    for fname in wanted_hf:
         if fname not in sizes:
             continue
         if sizes[fname] and sizes[fname] > _MAX_SMALL_FILE:
+            skipped.append({"path": fname, "reason": "response budget"})
             info.warnings.append(f"{fname} skipped (larger than {_MAX_SMALL_FILE} bytes).")
             continue
         try:
             res = fetcher.fetch(f"https://huggingface.co/{ref.repo_id}/resolve/{pin}/{fname}", max_bytes=_MAX_SMALL_FILE)
         except HTTPStatusError as exc:
+            inaccessible.append({"path": fname, "reason": f"HTTP {exc.status}"})
             info.warnings.append(f"Could not fetch {fname} (HTTP {exc.status}).")
             continue
         except NetworkError as exc:
@@ -568,8 +585,21 @@ def _inspect_hf(ref: SourceRef, fetcher: SafeFetcher, settings: Settings) -> Rep
             continue
         text = res.body.decode("utf-8", errors="replace")
         info.fetched.append((fname, len(res.body)))
+        inspected.append(fname)
         if fname == "README.md":
             info.readme = text[: settings.max_readme_chars]
+        elif fname.endswith(".py"):
+            scanned = scan_python_source(fname, text)
+            if scanned:
+                info.source_scan.append(scanned)
+                info.evidence_ledger.append({"source": fname, "location": "AST", "finding": "static Hugging Face source summary",
+                                             "provenance": "huggingface static scan", "confidence": 0.8})
+        elif fname == "requirements.txt":
+            reqs, flags = parse_requirements(text)
+            info.requirements += [{**r, "source": fname} for r in reqs]
+            info.requirement_flags += flags
+        elif fname == "pyproject.toml":
+            info.requirements += [{**r, "source": fname} for r in _parse_pyproject(text)]
         else:
             parsed = _try_json(text)
             if parsed is None:
@@ -577,7 +607,7 @@ def _inspect_hf(ref: SourceRef, fetcher: SafeFetcher, settings: Settings) -> Rep
                 continue
             attr = {"config.json": "config", "model_index.json": "model_index", "tokenizer_config.json": "tokenizer_config",
                     "adapter_config.json": "adapter_config", "generation_config.json": "generation_config",
-                    "preprocessor_config.json": "preprocessor_config"}.get(fname)
+                    "preprocessor_config.json": "preprocessor_config", "processor_config.json": "processor_config"}.get(fname)
             if attr:
                 setattr(info, attr, parsed)
     if info.config is None and inline_cfg is not None:
@@ -585,6 +615,11 @@ def _inspect_hf(ref: SourceRef, fetcher: SafeFetcher, settings: Settings) -> Rep
         info.warnings.append("config.json not fetched; using the Hub API's config summary.")
     if info.tokenizer_config is None and inline_cfg and isinstance(inline_cfg.get("tokenizer_config"), dict):
         info.tokenizer_config = inline_cfg["tokenizer_config"]
+    info.inspection_coverage = {"host": "huggingface", "discovered": len(info.files), "inspected": inspected,
+                                "skipped": skipped, "inaccessible": inaccessible,
+                                "remaining": [n for n in hf_sources if n not in inspected],
+                                "budget": {"max_source_files": settings.github_max_source_files,
+                                           "max_source_file_bytes": settings.github_max_source_file_bytes}}
     return info
 
 
