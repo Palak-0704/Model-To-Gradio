@@ -60,6 +60,11 @@ class Settings:
     max_redirects: int = 3
     max_readme_chars: int = 20_000
     max_tree_entries: int = 5_000
+    # Static GitHub inspection budgets. These are cost bounds, not a fixed list
+    # of files: candidates are prioritized and imports can add related modules.
+    github_max_source_files: int = 60
+    github_max_source_bytes: int = 4_000_000
+    github_max_source_file_bytes: int = 1_000_000
     # Security defaults: both are OFF unless explicitly enabled.
     allow_remote_code: bool = False
     allow_pickle_weights: bool = False
@@ -88,6 +93,9 @@ class Settings:
             http_timeout=float(os.environ.get("M2G_HTTP_TIMEOUT", "15")),
             allow_remote_code=_env_bool("M2G_ALLOW_REMOTE_CODE", False),
             allow_pickle_weights=_env_bool("M2G_ALLOW_PICKLE_WEIGHTS", False),
+            github_max_source_files=int(os.environ.get("M2G_GITHUB_MAX_SOURCE_FILES", "60")),
+            github_max_source_bytes=int(os.environ.get("M2G_GITHUB_MAX_SOURCE_BYTES", "4000000")),
+            github_max_source_file_bytes=int(os.environ.get("M2G_GITHUB_MAX_SOURCE_FILE_BYTES", "1000000")),
             rea_max_investigation_calls=int(os.environ.get("M2G_REA_MAX_CALLS", "40")),
             rea_max_investigation_seconds=float(os.environ.get("M2G_REA_MAX_SECONDS", "120")),
             rea_max_investigation_failures=int(os.environ.get("M2G_REA_MAX_FAILURES", "5")),

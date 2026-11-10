@@ -61,8 +61,6 @@ MAX_RELEASE_ASSETS = 80
 _MAX_SMALL_FILE = 1_500_000
 # Python source files that may be fetched from a GitHub repo purely as TEXT for static (ast) scanning. They are never
 # imported, executed or evaluated; the caps keep the scan small and bounded.
-MAX_SOURCE_FILES = 6
-_MAX_SOURCE_FILE = 200_000
 _MAX_SCAN_ITEMS = 80
 
 
@@ -134,6 +132,10 @@ class RepoInfo:
     # themselves are never downloaded.
     config_paths: Dict[str, str] = field(default_factory=dict)
     release_assets: List[Tuple[str, Optional[int]]] = field(default_factory=list)
+    # Transparent static-inspection coverage.  Missing/skipped source is unknown,
+    # never interpreted as absent functionality.
+    inspection_coverage: Dict[str, Any] = field(default_factory=dict)
+    evidence_ledger: List[Dict[str, Any]] = field(default_factory=list)
 
     # ---- file helpers
     def file_names(self) -> List[str]:
@@ -370,14 +372,15 @@ _SOURCE_HINT_RE = re.compile(r"(model|modeling|processor|pipeline|inference|infe
                              r"config|train|__init__)", re.I)
 
 
-def pick_source_files(paths: List[Tuple[str, Optional[int]]], limit: int = MAX_SOURCE_FILES) -> List[str]:
+def pick_source_files(paths: List[Tuple[str, Optional[int]]], limit: Optional[int] = None,
+                      max_file_bytes: Optional[int] = _MAX_SMALL_FILE) -> List[str]:
     """Choose a few small .py files (package modules, examples, entry points) worth a static scan."""
     scored: List[Tuple[int, str]] = []
     for path, size in paths:
         low = path.lower()
         if not low.endswith(".py") or _SKIP_DIR_RE.search(path) or low in ("setup.py", "conftest.py"):
             continue
-        if size is not None and size > _MAX_SOURCE_FILE:
+        if max_file_bytes is not None and size is not None and size > max_file_bytes:
             continue
         parts = path.split("/")
         score = 0
@@ -392,7 +395,8 @@ def pick_source_files(paths: List[Tuple[str, Optional[int]]], limit: int = MAX_S
         if len(parts) <= 2:
             score += 1
         scored.append((-score, path))
-    return [p for _, p in sorted(scored)[:limit]]
+    ordered = [p for _, p in sorted(scored)]
+    return ordered if limit is None else ordered[:max(0, limit)]
 
 
 def _dotted(node: ast.AST) -> str:
@@ -414,6 +418,7 @@ def scan_python_source(path: str, text: str) -> Optional[Dict[str, Any]]:
     defs: List[str] = []
     imports: List[str] = []
     imported_names: List[str] = []
+    local_imports: List[str] = []
     pretrained_ids: List[str] = []
     pretrained_classes: List[str] = []
     for node in ast.walk(tree):
@@ -427,6 +432,8 @@ def scan_python_source(path: str, text: str) -> Optional[Dict[str, Any]]:
             top = node.module.split(".")[0]
             imports.append(top)
             imported_names += [f"{top}:{a.name}" for a in node.names if len(imported_names) < _MAX_SCAN_ITEMS]
+        elif isinstance(node, ast.ImportFrom) and node.module and node.level > 0:
+            local_imports.append(node.module.replace(".", "/") + ".py")
         elif isinstance(node, ast.Call) and _call_name(node) == "from_pretrained":
             owner = _dotted(node.func.value) if isinstance(node.func, ast.Attribute) else ""
             if owner and owner not in pretrained_classes and len(pretrained_classes) < _MAX_SCAN_ITEMS:
@@ -437,7 +444,7 @@ def scan_python_source(path: str, text: str) -> Optional[Dict[str, Any]]:
                     pretrained_ids.append(v)
     return {"path": path, "classes": classes, "defs": defs, "imports": sorted(set(imports)),
             "imported_names": imported_names[:_MAX_SCAN_ITEMS], "pretrained_ids": pretrained_ids[:10],
-            "pretrained_classes": pretrained_classes}
+            "pretrained_classes": pretrained_classes, "local_imports": sorted(set(local_imports))[:_MAX_SCAN_ITEMS]}
 
 
 # README context cues. A link is the repository's OWN model when it carries the repo's name/owner or sits next to wording like
@@ -857,10 +864,32 @@ def _inspect_github(ref: SourceRef, fetcher: SafeFetcher, settings: Settings) ->
         try:
             tree = fetcher.get_json(f"{api}/git/trees/{fetch_ref}?recursive=1", gh_headers, max_bytes=4_000_000)
             if tree.get("truncated"):
-                info.warnings.append("GitHub file tree was truncated; some files may be missing from analysis.")
-            for e in (tree.get("tree") or [])[: settings.max_tree_entries]:
+                # GitHub's recursive tree endpoint signals truncation rather than
+                # offering an offset. Page through top-level subtrees explicitly,
+                # retaining a bounded, deduplicated aggregate.
+                info.warnings.append("GitHub recursive tree was truncated; continuing through top-level subtrees within the tree budget.")
+                root = fetcher.get_json(f"{api}/git/trees/{fetch_ref}", gh_headers, max_bytes=1_500_000)
+                extra = []
+                for entry in root.get("tree") or []:
+                    if len(extra) >= settings.max_tree_entries or not isinstance(entry, dict) or entry.get("type") != "tree":
+                        continue
+                    sha = entry.get("sha")
+                    prefix = entry.get("path")
+                    if not isinstance(sha, str) or not isinstance(prefix, str):
+                        continue
+                    page = fetcher.get_json(f"{api}/git/trees/{sha}?recursive=1", gh_headers, max_bytes=4_000_000)
+                    for child in page.get("tree") or []:
+                        if isinstance(child, dict) and isinstance(child.get("path"), str):
+                            extra.append({**child, "path": prefix + "/" + child["path"]})
+                            if len(extra) >= settings.max_tree_entries:
+                                break
+                tree = {**tree, "tree": list(tree.get("tree") or []) + extra}
+            seen_paths = set()
+            for e in (tree.get("tree") or []):
                 if isinstance(e, dict) and e.get("type") == "blob" and isinstance(e.get("path"), str):
-                    paths.append((e["path"], e.get("size") if isinstance(e.get("size"), int) else None))
+                    if e["path"] not in seen_paths and len(paths) < settings.max_tree_entries:
+                        seen_paths.add(e["path"])
+                        paths.append((e["path"], e.get("size") if isinstance(e.get("size"), int) else None))
         except HTTPStatusError as exc:
             info.warnings.append(f"Could not list repository files (HTTP {exc.status}).")
         except NetworkError as exc:
@@ -934,21 +963,49 @@ def _inspect_github(ref: SourceRef, fetcher: SafeFetcher, settings: Settings) ->
     info.requirements = uniq
     info.requirement_flags = sorted(set(info.requirement_flags))
 
-    # Static source scan: a handful of small .py files fetched as TEXT and parsed with ast (never imported or run).
-    for path in (pick_source_files(paths) if paths else []):
+    # Static source scan: prioritized text-only modules under configurable budgets.
+    # Import relationships are recorded from AST nodes; nothing is imported or
+    # executed.  We record every omission so callers never mistake it
+    # for negative evidence.
+    source_candidates = pick_source_files(paths) if paths else []
+    inspected, skipped, inaccessible, remaining = [], [], [], []
+    source_bytes = 0
+    for path in source_candidates:
+        if len(inspected) >= settings.github_max_source_files or source_bytes >= settings.github_max_source_bytes:
+            remaining.append(path)
+            continue
+        size = sizes.get(path)
+        if size is not None and size > settings.github_max_source_file_bytes:
+            skipped.append({"path": path, "reason": "per-file budget"})
+            continue
         try:
-            res = fetcher.fetch(f"https://raw.githubusercontent.com/{ref.repo_id}/{fetch_ref}/{path}", max_bytes=_MAX_SOURCE_FILE)
-        except HTTPStatusError:
+            allowed = min(settings.github_max_source_file_bytes, settings.github_max_source_bytes - source_bytes)
+            res = fetcher.fetch(f"https://raw.githubusercontent.com/{ref.repo_id}/{fetch_ref}/{path}", max_bytes=allowed)
+        except HTTPStatusError as exc:
+            inaccessible.append({"path": path, "reason": f"HTTP {exc.status}"})
             continue
         except NetworkError as exc:
             info.warnings.append(f"Network problem fetching {path}; remaining source files skipped: {redact_secrets(str(exc))[:100]}")
+            inaccessible.append({"path": path, "reason": "network"})
+            remaining.extend(p for p in source_candidates if p != path and p not in inspected)
             break
         except FetchError:
+            inaccessible.append({"path": path, "reason": "fetch failed"})
             continue
         info.fetched.append((path, len(res.body)))
+        inspected.append(path)
+        source_bytes += len(res.body)
         scanned = scan_python_source(path, res.body.decode("utf-8", errors="replace"))
         if scanned:
             info.source_scan.append(scanned)
+            info.evidence_ledger.append({"source": path, "location": "AST", "finding": "static source summary",
+                                         "provenance": "github static scan", "confidence": 0.8})
+    info.inspection_coverage = {"tree_entries": len(paths), "source_candidates": len(source_candidates),
+                                "inspected": inspected, "skipped": skipped, "inaccessible": inaccessible,
+                                "remaining": remaining, "bytes_read": source_bytes,
+                                "budget": {"max_files": settings.github_max_source_files,
+                                           "max_bytes": settings.github_max_source_bytes,
+                                           "max_file_bytes": settings.github_max_source_file_bytes}}
 
     info.linked_hf_models = _find_hf_links(info.readme)
     for rid in info.linked_hf_models:  # where each link was found (provenance only; it changes no ranking or decision)
