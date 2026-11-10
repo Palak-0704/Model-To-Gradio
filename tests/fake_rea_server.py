@@ -4,13 +4,23 @@ It speaks just enough of MCP for the platform's client: initialize, tools/list (
 the real REA 6.8.0 ones for the tools the platform may call, plus decoys the client must never call. Every tools/call is
 appended to the JSON-lines file named by FAKE_REA_LOG, so a test can prove which tools were REALLY executed and with what arguments.
 
-FAKE_REA_MODE: ok | tool_error | crash | hang | no_model_tool | view | view_error | no_view_tool | gguf_bad | capabilities
+FAKE_REA_MODE: ok | tool_error | crash | hang | no_model_tool | view | view_error | no_view_tool | gguf_bad
+                | capabilities | dynamic | reveal | answer | entropy_error | churn
   view       the model-inspection result advertises a retained parent_evidence_id, so the client pages it with inspect_analysis_view
   view_error the parent id is advertised but the view call fails (it must stay optional and never change the verdict)
   no_view_tool  the server does not advertise inspect_analysis_view at all
   capabilities  the server advertises the safe capability tools (entropy, unknowns, bundle) plus decoys; the client must select
                 the safe ones by policy and never call the decoys (open_binary is mutating, gdb_console is open-world,
                 record_unknown writes to the ledger)
+  dynamic       like capabilities, but the entropy capability is advertised under a DIFFERENT name (inspect_byte_entropy_v2):
+                selection is by capability, not by a fixed tool name
+  reveal        like capabilities, but the entropy result names a NEW retained Evidence id, so the client must open a FOLLOW-UP
+                paging question in a later round (proves the loop continues on new evidence)
+  answer        like capabilities, but the retained-Evidence page returns the architecture, which ANSWERS the architecture question
+                (proves a question disappears once its evidence arrives)
+  entropy_error the entropy tool fails (isError): the failure must be recorded and must never change the stage verdict
+  churn      like capabilities, but the entropy result reveals a NEW retained Evidence id EVERY call, so the paging question never
+             dries up: the loop must still terminate on the call budget, not spin forever
 """
 import json
 import math
@@ -65,6 +75,18 @@ CAPABILITY_TOOLS = [
 ]
 if MODE == "capabilities":
     TOOLS = TOOLS + CAPABILITY_TOOLS
+if MODE in ("dynamic", "reveal", "answer", "entropy_error", "churn"):
+    # like "capabilities", but the entropy capability may be advertised under a different name
+    tools = [t for t in CAPABILITY_TOOLS if t["name"] != "inspect_byte_entropy"]
+    if MODE == "dynamic":
+        tools = tools + [{"name": "inspect_byte_entropy_v2", "description": "Shannon byte entropy for a local file, offline.",
+                          "annotations": {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": False},
+                          "inputSchema": {"type": "object", "properties": {"path": {"type": "string"}, "offset": {"type": "integer"},
+                                                                            "length": {"type": "integer"}, "detail": {"type": "string"}},
+                                          "required": ["path"], "additionalProperties": False}}]
+    else:
+        tools = tools + [t for t in CAPABILITY_TOOLS if t["name"] == "inspect_byte_entropy"]
+    TOOLS = TOOLS + tools
 if MODE == "no_model_tool":
     TOOLS = [t for t in TOOLS if t["name"] != "inspect_model_artifact"]
 if MODE == "no_view_tool":
@@ -138,10 +160,12 @@ def call(name, args):
         if is_err:
             return {"isError": True, "content": [{"type": "text", "text": text}]}
         body = json.loads(text)
-        if MODE in ("view", "view_error", "capabilities"):
+        if MODE in ("view", "view_error", "capabilities", "dynamic", "reveal", "answer", "entropy_error", "churn"):
             body = {"normalized_result": {"parent_evidence_id": PARENT, "summary": body}, "confidence": "derived"}
         return {"content": [{"type": "text", "text": json.dumps(body)}]}
-    if name == "inspect_byte_entropy":
+    if name in ("inspect_byte_entropy", "inspect_byte_entropy_v2"):
+        if MODE == "entropy_error":
+            return {"isError": True, "content": [{"type": "text", "text": "entropy refused: not a regular file"}]}
         path = args["path"]
         length = int(args.get("length") or 0)
         with open(path, "rb") as fh:  # never reads more than the caller bounded: a sparse hole is not streamed
@@ -155,7 +179,12 @@ def call(name, args):
             if c:
                 p = c / total
                 ent -= p * math.log2(p)
-        return {"content": [{"type": "text", "text": json.dumps({"file_bytes_read": len(data), "entropy": round(ent, 4)})}]}
+        out = {"file_bytes_read": len(data), "entropy": round(ent, 4)}
+        if MODE == "reveal":  # the result names a NEW retained Evidence id -> a follow-up paging question appears
+            out["retained_evidence_id"] = "ev_" + "12" * 32
+        if MODE == "churn":  # a brand-new id on every call: the paging question must never dry up, yet the loop must still stop
+            out["retained_evidence_id"] = "ev_" + ("%064x" % (os.getpid() * 1_000_000 + time.time_ns() % 1_000_000))
+        return {"content": [{"type": "text", "text": json.dumps(out)}]}
     if name == "list_unknowns":
         return {"content": [{"type": "text", "text": json.dumps({"total": 1, "next_offset": None,
                                                                   "unknowns": [{"unknown_id": "unk_" + "cd" * 32,
@@ -168,8 +197,13 @@ def call(name, args):
         if MODE == "view_error":
             return {"isError": True, "content": [{"type": "text", "text": "view unavailable"}]}
         src = args.get("source") or {}
-        rows = {"kind": "summary", "collection": "metadata", "parent_evidence_id": src.get("evidence_id"),
-                "rows": [{"key": "general.architecture", "value": "llama"}, {"key": "general.name", "value": "TinyLlama"}]}
+        if MODE == "answer":  # the page returns the architecture, which answers the architecture question
+            rows = {"kind": "summary", "collection": "metadata", "parent_evidence_id": src.get("evidence_id"),
+                    "architecture": "llama", "format": "gguf",
+                    "rows": [{"key": "general.architecture", "value": "llama"}]}
+        else:
+            rows = {"kind": "summary", "collection": "metadata", "parent_evidence_id": src.get("evidence_id"),
+                    "rows": [{"key": "general.architecture", "value": "llama"}, {"key": "general.name", "value": "TinyLlama"}]}
         return {"content": [{"type": "text", "text": json.dumps(rows)}]}
     return {"isError": True, "content": [{"type": "text", "text": "unexpected tool " + name}]}
 

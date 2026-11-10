@@ -1,18 +1,19 @@
-"""Capability-driven REA discovery/selection and iterative orchestration.
+"""Dynamic REA capability discovery, evidence-gap-driven question generation, and the adaptive investigation loop.
 
 Two layers, kept distinct on purpose:
 
-  * UNIT tests (real logic, no server): the eligibility policy and the evidence-gap planner, driven by the ACTUAL REA 6.8.0 tool
-    metadata shipped in ``diagnostics/rea_tools.json``. These prove the policy refuses destructive/open-world/target-less tools and
-    that the planner only ever plans tools the server advertises, with arguments its schema declares.
-  * INTEGRATION tests (real client, real stdio, mock server): the client discovers the advertised tools, selects the safe ones,
-    invokes them, and never invokes the decoys - proven by the mock server's own call log. These are mocked only in the sense that
-    the REA SERVER is a fixture; the client, policy, planner, HTTP range fetcher and pipeline are the real code paths.
+  * UNIT tests (real logic, no server): the eligibility policy, the capability tagger, the evidence-gap question generators, the
+    question planner and the observation folding, driven by the ACTUAL REA 6.8.0 tool metadata shipped in ``diagnostics/rea_tools.json``.
+    These prove the policy refuses destructive/open-world/target-less tools, that questions are raised only when a capability can
+    answer them, and that a successful call folds its evidence back so the next round sees it.
+  * INTEGRATION tests (real client, real stdio, mock server): the client discovers the advertised tools, selects the safe ones by
+    capability, runs the adaptive loop (continuing on new evidence, stopping when the questions dry up or the budget is spent),
+    and never invokes the decoys - proven by the mock server's own call log. These are mocked only in the sense that the REA SERVER
+    is a fixture; the client, policy, planner, HTTP range fetcher and pipeline are the real code paths.
 """
 import json
 import os
 import shutil
-import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -74,72 +75,155 @@ class TestPolicyAgainstRealCatalog(unittest.TestCase):
         self.assertIn("inspect_byte_entropy", eligible)
 
 
-class TestPlanner(unittest.TestCase):
-    """The evidence-gap planner only plans advertised, eligible tools with schema-valid arguments."""
+def _catalog_with(*names):
+    """A small catalog containing only the named real REA tools (so a test can withhold a capability)."""
+    full = _real_catalog()
+    return {n: full[n] for n in names if n in full}
 
-    def setUp(self):
-        self.catalog = _real_catalog()
 
-    def test_retained_view_is_planned_only_for_a_real_evidence_id(self):
-        ctx = caps.PlanContext(available=self.catalog, retained_ids={"model.gguf": "ev_" + "ab" * 32},
-                               missing_evidence=[caps.GAP_RETAINED_METADATA])
-        plan = caps.plan_capability_investigation(ctx)
-        self.assertEqual([p.tool for p in plan], ["inspect_analysis_view"])
-        self.assertEqual(plan[0].arguments["source"]["evidence_id"], "ev_" + "ab" * 32)
+def _state(**kw):
+    """An EvidenceState built from a real tool catalog unless the test overrides ``capabilities``."""
+    caps_by_tag = kw.pop("capabilities", None)
+    if caps_by_tag is None:
+        caps_by_tag = caps.tag_tools(_catalog_with("inspect_model_artifact", "inspect_analysis_view",
+                                                   "inspect_byte_entropy", "list_unknowns", "get_evidence_bundle"))
+    return caps.EvidenceState(capabilities=caps_by_tag, **kw)
 
-    def test_a_bogus_evidence_id_is_not_planned(self):
-        ctx = caps.PlanContext(available=self.catalog, retained_ids={"m.gguf": "not-an-id"},
-                               missing_evidence=[caps.GAP_RETAINED_METADATA])
-        self.assertEqual(caps.plan_capability_investigation(ctx), [])
 
-    def test_byte_entropy_is_bounded_to_the_header_window(self):
-        ctx = caps.PlanContext(available=self.catalog, header_files=[("m.safetensors", "/tmp/x", 512)],
-                               missing_evidence=[caps.GAP_BYTE_ENTROPY])
-        plan = caps.plan_capability_investigation(ctx)
-        self.assertEqual([p.tool for p in plan], ["inspect_byte_entropy"])
-        self.assertEqual(plan[0].arguments["length"], 512)  # never the whole (sparse) file
-        self.assertEqual(plan[0].arguments["offset"], 0)
+class TestQuestionGeneration(unittest.TestCase):
+    """Questions come from the collected evidence and only when a capability that can answer them is advertised."""
 
-    def test_unadvertised_tool_is_never_planned(self):
-        ctx = caps.PlanContext(available={}, header_files=[("m", "/tmp/x", 10)],
-                               missing_evidence=[caps.GAP_BYTE_ENTROPY])
-        self.assertEqual(caps.plan_capability_investigation(ctx), [])
+    def test_an_undeclared_architecture_raises_a_bounded_entropy_question(self):
+        state = _state(files=[("m.safetensors", "/tmp/m")], header_bytes={"m.safetensors": 512},
+                       formats={"m.safetensors": "safetensors"})
+        qs = caps.generate_questions(state)
+        entropy = [q for q in qs if q.kind == "byte_entropy"]
+        self.assertEqual(len(entropy), 1)
+        self.assertEqual(entropy[0].target, "m.safetensors")
+        self.assertEqual(entropy[0].arguments["length"], 512)  # bounded to the header window, never the whole file
+        self.assertEqual(entropy[0].arguments["offset"], 0)
 
-    def test_session_views_are_planned_once(self):
-        ctx = caps.PlanContext(available=self.catalog, missing_evidence=[caps.GAP_RESIDUAL_UNKNOWNS, caps.GAP_EVIDENCE_BUNDLE])
-        tools = [p.tool for p in caps.plan_capability_investigation(ctx)]
-        self.assertEqual(tools, ["list_unknowns", "get_evidence_bundle"])
+    def test_a_declared_architecture_raises_no_entropy_question(self):
+        state = _state(files=[("m.gguf", "/tmp/m")], header_bytes={"m.gguf": 512},
+                       formats={"m.gguf": "gguf"}, architectures={"m.gguf": "llama"})
+        self.assertEqual([q for q in caps.generate_questions(state) if q.kind == "byte_entropy"], [])
 
-    def test_planner_deduplicates_per_target(self):
-        ctx = caps.PlanContext(available=self.catalog, header_files=[("m", "/tmp/x", 8), ("m", "/tmp/x", 8)],
-                               missing_evidence=[caps.GAP_BYTE_ENTROPY])
-        self.assertEqual(len(caps.plan_capability_investigation(ctx)), 1)
+    def test_a_question_needing_an_absent_capability_is_not_raised(self):
+        # only the model-inspection tool is advertised: nothing can answer an entropy/unknowns/bundle question
+        state = _state(capabilities=caps.tag_tools(_catalog_with("inspect_model_artifact")),
+                       files=[("m.safetensors", "/tmp/m")], header_bytes={"m.safetensors": 512},
+                       formats={"m.safetensors": "safetensors"})
+        self.assertEqual(caps.generate_questions(state), [])
 
-    def test_argument_the_schema_does_not_advertise_is_dropped(self):
-        # a tool that advertises only "path" must not be planned with a "detail" argument
-        tool = {"name": "only_path", "annotations": {"destructiveHint": False, "openWorldHint": False},
-                "inputSchema": {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]}}
-        ctx = caps.PlanContext(available={"only_path": tool}, header_files=[("m", "/tmp/x", 8)],
-                               missing_evidence=[caps.GAP_BYTE_ENTROPY])
-        # the planner would only ever pass path/offset/length/detail to entropy; "only_path" is not entropy, so nothing is planned
-        self.assertEqual(caps.plan_capability_investigation(ctx), [])
+    def test_a_retained_evidence_id_raises_a_paging_question(self):
+        state = _state(retained_ids={"ev_" + "ab" * 32: "m.gguf"})
+        qs = caps.generate_questions(state)
+        self.assertEqual(qs[0].kind, "retained_view")  # paging is raised first, before the whole-session questions
+        self.assertEqual(qs[0].target, "ev_" + "ab" * 32)
 
-    def test_a_renamed_equivalent_tool_is_discovered(self):
-        # the entropy capability under a different name (still safe) is selected instead of the missing preferred name
+    def test_a_bogus_evidence_id_raises_no_paging_question(self):
+        state = _state(retained_ids={"not-an-id": "m.gguf"})
+        self.assertEqual([q for q in caps.generate_questions(state) if q.kind == "retained_view"], [])
+
+    def test_a_paged_evidence_id_is_not_asked_again(self):
+        evid = "ev_" + "ab" * 32
+        state = _state(retained_ids={evid: "m.gguf"}, paged_ids={evid})
+        self.assertEqual([q for q in caps.generate_questions(state) if q.kind == "retained_view"], [])
+
+    def test_whole_session_questions_are_raised_once_each(self):
+        state = _state()
+        kinds = [q.kind for q in caps.generate_questions(state)]
+        self.assertEqual(kinds.count("residual_unknowns"), 1)
+        self.assertEqual(kinds.count("evidence_bundle"), 1)
+
+
+class TestQuestionPlanning(unittest.TestCase):
+    """Planned calls are advertised, eligible tools with schema-valid arguments, tagged with their capability."""
+
+    def test_entropy_question_is_planned_as_a_capability_call(self):
+        state = _state(files=[("m.safetensors", "/tmp/m")], header_bytes={"m.safetensors": 512},
+                       formats={"m.safetensors": "safetensors"})
+        plan = caps.plan_questions(state, caps.generate_questions(state), caps.CapabilityPolicy())
+        entropy = [p for p in plan if p.capability == "byte_entropy"]
+        self.assertEqual(len(entropy), 1)
+        self.assertEqual(entropy[0].tool, "inspect_byte_entropy")
+        self.assertEqual(entropy[0].arguments["length"], 512)
+
+    def test_a_renamed_equivalent_tool_is_selected(self):
         renamed = {"inspect_byte_entropy_v2": {"name": "inspect_byte_entropy_v2", "description": "Shannon byte entropy offline",
                                                "annotations": {"destructiveHint": False, "openWorldHint": False},
-                                               "inputSchema": {"type": "object", "properties": {"path": {"type": "string"}},
-                                                               "required": ["path"]}}}
-        ctx = caps.PlanContext(available=renamed, header_files=[("m", "/tmp/x", 8)], missing_evidence=[caps.GAP_BYTE_ENTROPY])
-        plan = caps.plan_capability_investigation(ctx)
+                                               "inputSchema": {"type": "object", "properties": {"path": {"type": "string"},
+                                                                                                "offset": {"type": "integer"},
+                                                                                                "length": {"type": "integer"}}}}}
+        state = caps.EvidenceState(capabilities=caps.tag_tools(renamed),
+                                   files=[("m.safetensors", "/tmp/m")], header_bytes={"m.safetensors": 512},
+                                   formats={"m.safetensors": "safetensors"})
+        plan = caps.plan_questions(state, caps.generate_questions(state), caps.CapabilityPolicy())
         self.assertEqual([p.tool for p in plan], ["inspect_byte_entropy_v2"])
 
-    def test_no_preferred_and_no_match_plans_nothing(self):
-        # an unrelated safe tool must never be picked up for an intent it does not serve
+    def test_an_unrelated_safe_tool_is_never_selected(self):
         other = {"binary_overview": {"name": "binary_overview", "annotations": {"destructiveHint": False, "openWorldHint": False},
-                                     "inputSchema": {"type": "object", "properties": {}, "required": []}}}
-        ctx = caps.PlanContext(available=other, header_files=[("m", "/tmp/x", 8)], missing_evidence=[caps.GAP_BYTE_ENTROPY])
-        self.assertEqual(caps.plan_capability_investigation(ctx), [])
+                                     "inputSchema": {"type": "object", "properties": {}}}}
+        state = caps.EvidenceState(capabilities=caps.tag_tools(other),
+                                   files=[("m.safetensors", "/tmp/m")], header_bytes={"m.safetensors": 512},
+                                   formats={"m.safetensors": "safetensors"})
+        self.assertEqual(caps.plan_questions(state, caps.generate_questions(state), caps.CapabilityPolicy()), [])
+
+
+class TestObservationFolding(unittest.TestCase):
+    """A successful call's output is folded back into the evidence state so the next round sees the new facts."""
+
+    def test_entropy_marks_the_file_done_and_stops_asking(self):
+        state = _state(files=[("m.safetensors", "/tmp/m")], header_bytes={"m.safetensors": 512},
+                       formats={"m.safetensors": "safetensors"})
+        self.assertTrue([q for q in caps.generate_questions(state) if q.kind == "byte_entropy"])
+        caps.observe(state, "byte_entropy", "m.safetensors", json.dumps({"entropy": 7.1}))
+        self.assertEqual([q for q in caps.generate_questions(state) if q.kind == "byte_entropy"], [])
+
+    def test_a_revealed_evidence_id_becomes_a_new_paging_question(self):
+        state = _state()
+        self.assertEqual([q for q in caps.generate_questions(state) if q.kind == "retained_view"], [])
+        caps.observe(state, "byte_entropy", "m.safetensors", json.dumps({"retained_evidence_id": "ev_" + "12" * 32}))
+        qs = [q for q in caps.generate_questions(state) if q.kind == "retained_view"]
+        self.assertEqual(len(qs), 1)
+        self.assertEqual(qs[0].target, "ev_" + "12" * 32)
+
+    def test_a_paged_id_is_recorded_as_paged(self):
+        evid = "ev_" + "ab" * 32
+        state = _state(retained_ids={evid: "m.gguf"})
+        caps.observe(state, "retained_view", evid, json.dumps({"parent_evidence_id": evid}))
+        self.assertIn(evid, state.paged_ids)
+        self.assertEqual([q for q in caps.generate_questions(state) if q.kind == "retained_view"], [])
+
+    def test_the_state_signature_changes_only_when_evidence_changes(self):
+        state = _state(files=[("m.safetensors", "/tmp/m")], header_bytes={"m.safetensors": 512},
+                       formats={"m.safetensors": "safetensors"})
+        before = caps.state_signature(state)
+        caps.observe(state, "byte_entropy", "m.safetensors", json.dumps({"entropy": 7.1}))
+        self.assertNotEqual(caps.state_signature(state), before)
+
+    def test_a_malformed_payload_adds_nothing(self):
+        state = _state()
+        caps.observe(state, "byte_entropy", "m.safetensors", "{not json")
+        # the call established its capability key and marked the file done, but parsed no new format/architecture fact
+        self.assertNotIn("safetensors", state.formats.values())
+        self.assertNotIn("m.safetensors", state.architectures)
+        self.assertEqual(state.retained_ids, {})
+
+
+class TestRealCatalogDrivesSelection(unittest.TestCase):
+    """The selection is driven by the real catalog's metadata, not a name list: the planner picks from what it is given."""
+
+    def test_planner_selects_from_the_real_catalog(self):
+        state = _state(capabilities=caps.tag_tools(_real_catalog()), retained_ids={"ev_" + "cd" * 32: "m.gguf"})
+        plan = caps.plan_questions(state, caps.generate_questions(state), caps.CapabilityPolicy())
+        tools = [p.tool for p in plan]
+        self.assertIn("inspect_analysis_view", tools)
+        self.assertIn("list_unknowns", tools)
+        self.assertIn("get_evidence_bundle", tools)
+        for p in plan:  # every selected tool is one the real server advertises
+            self.assertIn(p.tool, _real_catalog())
+
 
 
 class Base(unittest.TestCase):
@@ -163,10 +247,10 @@ class Base(unittest.TestCase):
     def tools_invoked(self):
         return [c["tool"] for c in self.server_calls()]
 
-    def run_rea(self, files=(("config.json", 5), ("model.safetensors", SIZE))):
+    def run_rea(self, files=(("config.json", 5), ("model.safetensors", SIZE)), settings=None):
         web_ = RangeWeb()
         fetcher = SafeFetcher(Settings(), resolver=PUBLIC, transport=web_)
-        report = rc.run_rea_inspection(hf_info(files), fetcher, Settings(), command=CMD, project_dir=self.tmp)
+        report = rc.run_rea_inspection(hf_info(files), fetcher, settings or Settings(), command=CMD, project_dir=self.tmp)
         return report, web_
 
 
@@ -221,6 +305,69 @@ class TestCapabilityInvestigationIntegration(Base):
         self.assertTrue(all(isinstance(e["ok"], bool) for e in report.investigation))
 
 
+class TestAdaptiveInvestigationIntegration(Base):
+    """The REAL client, over REAL stdio, against the mock server: the adaptive loop continues on new evidence, stops cleanly, and
+    never lets an optional failure or a capability-less server change the verdict."""
+
+    def test_a_renamed_capability_tool_is_discovered_and_used(self):
+        self.set_mode("dynamic")
+        report, _ = self.run_rea()
+        self.assertEqual(report.status, rc.COMPLETED)
+        self.assertIn("byte_entropy", report.capabilities_by_tag)
+        self.assertEqual(report.capabilities_by_tag["byte_entropy"], ["inspect_byte_entropy_v2"])
+        self.assertIn("inspect_byte_entropy_v2", self.tools_invoked())
+
+    def test_new_evidence_opens_a_follow_up_paging_round(self):
+        self.set_mode("reveal")
+        report, _ = self.run_rea()
+        self.assertEqual(report.status, rc.COMPLETED)
+        pages = [c for c in self.server_calls() if c["tool"] == "inspect_analysis_view"]
+        self.assertGreaterEqual(len(pages), 2)  # the parent page, then the id the entropy call revealed
+        self.assertIn("retained_view", [i["capability"] for i in report.investigation])
+
+    def test_an_answered_question_is_not_asked_again(self):
+        self.set_mode("answer")
+        report, _ = self.run_rea()
+        self.assertEqual(report.status, rc.COMPLETED)
+        self.assertEqual(report.questions, [])  # the page answered the architecture question, so nothing remains
+        self.assertEqual(report.stop_reason, "the open questions were exhausted")
+        self.assertEqual(len([c for c in self.server_calls() if c["tool"] == "inspect_analysis_view"]), 1)
+
+    def test_a_failed_optional_call_is_recorded_and_keeps_the_verdict(self):
+        self.set_mode("entropy_error")
+        report, _ = self.run_rea()
+        self.assertEqual(report.status, rc.COMPLETED)  # the failure is optional and must never change the verdict
+        failed = [i for i in report.investigation if not i["ok"]]
+        self.assertEqual([i["capability"] for i in failed], ["byte_entropy"])
+        self.assertEqual(report.budget["failures"], 1)
+
+    def test_the_loop_terminates_on_the_budget_when_evidence_keeps_changing(self):
+        self.set_mode("churn")
+        report, _ = self.run_rea(settings=Settings(rea_max_investigation_calls=3))
+        self.assertEqual(report.status, rc.COMPLETED)
+        self.assertEqual(report.stop_reason, "the investigation resource budget was spent")
+        self.assertEqual(report.budget["calls_made"], 3)
+        self.assertLessEqual(report.budget["calls_made"], 3)  # bounded, never a spin
+
+    def test_no_capability_means_the_loop_stops_immediately(self):
+        self.set_mode("ok")  # only the core tools are advertised; nothing optional can be planned
+        report, _ = self.run_rea()
+        self.assertEqual(report.status, rc.COMPLETED)
+        # only the core inspection/analysis tools are eligible; no entropy/unknowns/bundle capability is advertised
+        self.assertNotIn("byte_entropy", report.capabilities_by_tag)
+        self.assertNotIn("residual_unknowns", report.capabilities_by_tag)
+        self.assertNotIn("evidence_bundle", report.capabilities_by_tag)
+        self.assertEqual(report.investigation, [])
+        self.assertIn("exhausted", report.stop_reason)
+
+    def test_capabilities_by_tag_reflects_only_eligible_tools(self):
+        report, _ = self.run_rea()
+        flat = [t for tools in report.capabilities_by_tag.values() for t in tools]
+        for decoy in ("record_unknown", "close_binary", "open_binary", "gdb_console"):
+            self.assertNotIn(decoy, flat)
+        self.assertIn("inspect_byte_entropy", flat)
+
+
 class TestCapabilityFailures(Base):
     """A failing optional capability call is recorded, never fatal; the core inspection still decides the status."""
 
@@ -244,20 +391,6 @@ class TestCapabilityFailures(Base):
                                         "inputSchema": {"type": "object", "properties": {"command": {"type": "string"}}}}}
         with self.assertRaises(rc.ReaError):
             client.call_tool("gdb_console", {"command": "x"}, target="session")
-
-
-class TestRealCatalogDrivesSelection(Base):
-    """The selection is driven by the real catalog's metadata, not a name list: the planner picks from what it is given."""
-
-    def test_planner_selects_from_the_real_catalog(self):
-        catalog = _real_catalog()
-        ctx = caps.PlanContext(available=catalog, retained_ids={"m.gguf": "ev_" + "cd" * 32},
-                               missing_evidence=[caps.GAP_RETAINED_METADATA, caps.GAP_RESIDUAL_UNKNOWNS])
-        tools = [p.tool for p in caps.plan_capability_investigation(ctx)]
-        self.assertEqual(tools, ["inspect_analysis_view", "list_unknowns"])
-        # and every selected tool is one the real server advertises
-        for t in tools:
-            self.assertIn(t, catalog)
 
 
 class TestEndToEndHandoff(unittest.TestCase):
@@ -291,9 +424,13 @@ class TestEndToEndHandoff(unittest.TestCase):
         self.assertEqual(res.rea.status, rc.COMPLETED, res.rea.log)
         report = res.analysis.combined_analysis
         self.assertIn("rea_investigation", report)
-        self.assertTrue(report["rea_investigation"]["capabilities_advertised"])
-        self.assertIn("inspect_byte_entropy", report["rea_investigation"]["capabilities_advertised"])
-        self.assertTrue(report["rea_investigation"]["calls"])
+        section = report["rea_investigation"]
+        self.assertTrue(section["capabilities_advertised"])
+        self.assertIn("inspect_byte_entropy", section["capabilities_advertised"])
+        self.assertIn("byte_entropy", section["capabilities_by_tag"])
+        self.assertTrue(section["stop_reason"])
+        self.assertIn("budget", section)
+        self.assertTrue(section["calls"])
         self.assertTrue(res.analysis.generatable)
 
     def test_investigation_reaches_the_generation_handoff(self):
@@ -303,6 +440,8 @@ class TestEndToEndHandoff(unittest.TestCase):
         self.assertEqual(adapter.calls, 1)
         rea = facts_of(adapter.requests[0])["rea_inspection"]
         self.assertIn("inspect_byte_entropy", rea["capabilities_discovered"])
+        self.assertTrue(rea["investigation_stop_reason"])
+        self.assertIn("byte_entropy", rea["capabilities_by_tag"])
         self.assertTrue(any(i["tool"] == "inspect_byte_entropy" for i in rea["investigation"]))
 
 

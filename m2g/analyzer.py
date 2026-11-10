@@ -1462,7 +1462,8 @@ def _rea_side(rea: Any) -> Dict[str, Any]:
     if not isinstance(rea, dict):
         return {"status": "not_invoked", "reason": "No REA result is attached to this analysis.", "usable": False, "coverage": "none",
                 "files_inspected": 0, "files_total": 0, "server": {}, "tools_executed": [], "files": [], "findings": [],
-                "weight_formats": [], "capabilities": [], "investigation": [], "errors": []}
+                "weight_formats": [], "capabilities": [], "capabilities_by_tag": {}, "refusals": {}, "questions": [],
+                "investigation": [], "stop_reason": "", "budget": {}, "errors": []}
     calls = [c for c in rea.get("calls") or [] if isinstance(c, dict)]
     ok_targets = {c.get("target") for c in calls if c.get("tool") == "inspect_model_artifact" and c.get("ok") is True}
     files = [{k: s.get(k) for k in ("file", "tensor_count", "parameters", "dtypes", "data_bytes", "logical_size",
@@ -1480,7 +1481,12 @@ def _rea_side(rea: Any) -> Dict[str, Any]:
         "files": files,
         "weight_formats": formats,
         "capabilities": [str(c)[:80] for c in (rea.get("capabilities") or [])],
+        "capabilities_by_tag": {str(k): [str(t)[:80] for t in v] for k, v in (rea.get("capabilities_by_tag") or {}).items()},
+        "refusals": {str(k): str(v)[:160] for k, v in (rea.get("refusals") or {}).items()},
+        "questions": [q for q in (rea.get("questions") or []) if isinstance(q, dict)][:20],
         "investigation": [i for i in (rea.get("investigation") or []) if isinstance(i, dict)][:20],
+        "stop_reason": str(rea.get("stop_reason") or "")[:200],
+        "budget": rea.get("budget") if isinstance(rea.get("budget"), dict) else {},
         "findings": [str(f)[:300] for f in (rea.get("findings") or [])[:6]],
         "errors": [str(c.get("error"))[:200] for c in calls if c.get("error")][:3],
     }
@@ -1516,16 +1522,27 @@ def _rea_weight_format_section(a: Analysis, side: Dict[str, Any]) -> Tuple[Dict[
 
 
 def _rea_investigation_section(side: Dict[str, Any]) -> Tuple[Dict[str, Any], List[str]]:
-    """The capability-selected REA calls beyond the header inspection (retained-Evidence pages, byte entropy, residual-unknown
-    ledger, Evidence bundle). Purely additive: each entry keeps its tool, target and reason, and a failed optional call is
-    recorded as such rather than dropped. Returns (section, warnings)."""
+    """The dynamic REA investigation beyond the header inspection: the capabilities discovered, the questions the collected
+    evidence raised, the capability-selected calls that answered them (retained-Evidence pages, byte entropy, residual-unknown
+    ledger, Evidence bundle, ...), and why the adaptive loop stopped. Purely additive: each entry keeps its tool, target, reason
+    and question, and a failed optional call is recorded as such rather than dropped. Returns (section, warnings)."""
     inv = [i for i in (side.get("investigation") or []) if isinstance(i, dict)]
-    section: Dict[str, Any] = {"capabilities_advertised": list(side.get("capabilities") or []), "calls": []}
+    answered = {i.get("question") for i in inv if i.get("ok") and i.get("question")}
+    section: Dict[str, Any] = {
+        "capabilities_advertised": list(side.get("capabilities") or []),
+        "capabilities_by_tag": dict(side.get("capabilities_by_tag") or {}),
+        "refused_tools": dict(side.get("refusals") or {}),
+        "stop_reason": str(side.get("stop_reason") or ""),
+        "budget": dict(side.get("budget") or {}),
+        "questions": [{"qid": q.get("qid"), "kind": q.get("kind"), "target": q.get("target"), "text": str(q.get("text") or "")[:200],
+                       "answered": q.get("qid") in answered} for q in (side.get("questions") or []) if isinstance(q, dict)],
+        "calls": [],
+    }
     warnings: List[str] = []
     ok = 0
     for i in inv:
         entry = {"tool": i.get("tool"), "target": i.get("target"), "reason": i.get("reason"), "ok": bool(i.get("ok")),
-                 "detail": str(i.get("detail") or "")[:160]}
+                 "capability": i.get("capability"), "question": i.get("question"), "detail": str(i.get("detail") or "")[:160]}
         section["calls"].append(entry)
         if entry["ok"]:
             ok += 1
