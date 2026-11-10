@@ -7,7 +7,7 @@ from __future__ import annotations
 import json
 from typing import Any, List, Optional, Sequence
 
-from ..rea_client import ALLOWED_TOOLS, FIXED_ARGS
+from ..rea_client import ALLOWED_TOOLS, FIXED_ARGS, REQUIRED_TOOLS
 from .guards import cap_text, sanitize
 from .provenance import METHOD_DERIVED, METHOD_REPORT, SOURCE_PLATFORM, SOURCE_REA, Clock, Provenance, platform_provenance
 from .schema import COLLECTED, INACCESSIBLE, SKIPPED, EvidenceItem
@@ -16,11 +16,15 @@ _STATUS_MAP = {"completed": COLLECTED, "partial": COLLECTED, "failed": INACCESSI
 _RAW_LIMIT = 8_000
 
 
-def inventory_item(clock: Clock, tools_discovered: int = 0) -> EvidenceItem:
-    """What the platform lets REA do (fixed allow-list and arguments), as a fact about the collection, not about the model."""
-    data = {"allowed_tools": list(ALLOWED_TOOLS), "fixed_arguments": {k: dict(v) for k, v in FIXED_ARGS.items()},
+def inventory_item(clock: Clock, tools_discovered: int = 0, capabilities: Optional[Sequence[str]] = None) -> EvidenceItem:
+    """What the platform lets REA do (the capability policy and its fixed arguments), as a fact about the collection, not the model."""
+    data = {"allowed_tools": list(ALLOWED_TOOLS), "required_tools": list(REQUIRED_TOOLS),
+            "fixed_arguments": {k: dict(v) for k, v in FIXED_ARGS.items()},
+            "capability_policy": "tools are selected from the advertised schemas: never destructive, never open-world, and only "
+                                 "with arguments this platform can supply",
+            "capabilities_discovered": list(capabilities or []),
             "tools_advertised_by_server": tools_discovered,
-            "note": "Only these tools can be called by the platform; every other advertised tool is refused by the client."}
+            "note": "Only tools the capability policy permits can be called; every other advertised tool is refused by the client."}
     return EvidenceItem("rea:inventory", "rea-inventory", COLLECTED,
                         Provenance(SOURCE_PLATFORM, "m2g.rea_client", METHOD_DERIVED, None, clock()), data=data, untrusted=False)
 
@@ -50,6 +54,8 @@ def collect_rea(report: Optional[Any], clock: Clock, secrets: Sequence[str] = ()
                              error="no REA report was supplied and no REA runner is configured; no REA tool was called")]
     server = " ".join(str(report.server.get(k, "")) for k in ("name", "version")).strip() or "REA"
     data = {"status": report.status, "reason": report.reason, "server": report.server, "tools_discovered": report.tools_discovered,
+            "capabilities_discovered": list(getattr(report, "capabilities", []) or []),
+            "investigation": list(getattr(report, "investigation", []) or []),
             "tools_invoked": [c.tool for c in report.calls], "shards_total": report.shards_total,
             "shards_inspected": report.shards_inspected, "bytes_downloaded": report.bytes_downloaded,
             "http_requests": report.http_requests, "health_check": report.health_check, "findings": list(report.findings),
@@ -58,7 +64,7 @@ def collect_rea(report: Optional[Any], clock: Clock, secrets: Sequence[str] = ()
     if redacted:  # a secret in the report: store the redacted structure, never the original
         data = json.loads(text)
     status = _STATUS_MAP.get(report.status, INACCESSIBLE)
-    items = [inventory_item(clock, report.tools_discovered),
+    items = [inventory_item(clock, report.tools_discovered, getattr(report, "capabilities", None)),
              EvidenceItem("rea:status", "rea-status", status, Provenance(SOURCE_REA, server, METHOD_REPORT, None, clock()), data=data,
                           redacted=redacted, untrusted=False,
                           error=None if status == COLLECTED else sanitize(str(report.reason), secrets)[0][:300])]

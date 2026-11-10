@@ -4,7 +4,8 @@ Pipeline position:  Hugging Face URL -> metadata inspection -> **REA inspection 
 
 What REA is used for here, and which tools
   The REA 6.8.0 server advertises 229 tools (schemas in ``diagnostics/rea_tools.md``). Almost all of them need a local binary,
-  a device, a debugger or a browser session. The ones used here fit "safely inspect a model without running anything":
+  a device, a debugger or a browser session. The stage drives two REQUIRED tools by hand and selects every other tool through a
+  capability policy (``m2g.rea_capabilities``) that reads the schemas the server actually advertises:
 
   * ``binary_session``          no arguments; reports server identity/status without starting any analysis (health check).
   * ``inspect_model_artifact``  ``path`` (a LOCAL file, never a URL), ``hash`` ("header" = declarations only, never "full"),
@@ -14,6 +15,11 @@ What REA is used for here, and which tools
                                 ``metadata`` collection of a GGUF file: ``general.architecture`` and friends). It is called only
                                 when the model-inspection result advertises a retained ``parent_evidence_id``; it reads no bytes
                                 from disk and reopens nothing.
+  * capability-selected tools    the analysis raises evidence gaps (retained metadata, byte entropy, residual unknowns, the
+                                Evidence bundle); the planner resolves each to a tool the server advertises that the policy permits
+                                (never destructive, never open-world, and only with arguments this platform can supply) and calls it
+                                with arguments filtered to that tool's own schema. These calls are OPTIONAL: a failure is recorded
+                                and noted but never changes the stage's verdict.
 
 How a header-only inspection works (sparse files)
   ``inspect_model_artifact`` validates the tensor offsets declared in the header against the file's LOGICAL size, so a file that
@@ -32,13 +38,14 @@ How a header-only inspection works (sparse files)
        then deletes it.
 
   If the filesystem does not give a really sparse file, the stage reports ``not_applicable`` and no REA tool is called.
-  Any other REA tool is refused by the client even if the caller asks for it.
+  A tool the capability policy does not permit (destructive, open-world, or needing a target this stage does not have) is refused
+  by the client even if the caller asks for it.
 
 Honest status
   ``completed``       every planned tool call really ran and succeeded
   ``partial``         the model inspection ran for at least one file, but something else failed or was skipped
   ``failed``          REA was needed but no model inspection succeeded (REA missing, crashed, refused the file, ...)
-  ``not_applicable``  nothing REA can inspect (no safetensors weights, or no sparse-file support); no REA tool was called
+  ``not_applicable``  nothing REA can inspect (no safetensors/GGUF weights, or no sparse-file support); no REA tool was called
   ``not_invoked``     REA was not run at all (not configured / disabled); no REA tool was called
   A status is never ``completed`` or ``partial`` unless ``inspect_model_artifact`` was actually called and returned a result.
 """
@@ -62,6 +69,16 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from .colab_cli import child_environment, kill_process_tree
 from .config import PROJECT_ROOT, Settings
+from .rea_capabilities import (
+    CapabilityPolicy,
+    GAP_BYTE_ENTROPY,
+    GAP_EVIDENCE_BUNDLE,
+    GAP_RESIDUAL_UNKNOWNS,
+    GAP_RETAINED_METADATA,
+    PlanContext,
+    known_safe_tools,
+    plan_capability_investigation,
+)
 from .security import (
     FetchError,
     SafeFetcher,
@@ -81,6 +98,10 @@ CLIENT_INFO = {"name": "model-to-gradio", "version": "0.1"}
 HEALTH_TOOL = "binary_session"
 MODEL_TOOL = "inspect_model_artifact"
 VIEW_TOOL = "inspect_analysis_view"
+# The tools the header-inspection contract depends on: their absence makes the stage fail, because without them there is no
+# model evidence at all. Every OTHER tool is chosen by the capability policy (m2g.rea_capabilities) from the advertised schemas.
+REQUIRED_TOOLS = (HEALTH_TOOL, MODEL_TOOL)
+# Kept for the tools the platform drives by hand with fixed arguments. Capability-selected tools carry their own arguments.
 ALLOWED_TOOLS = (HEALTH_TOOL, MODEL_TOOL, VIEW_TOOL)
 # Arguments are fixed by the platform. "header" reads declarations only ("full" would stream every byte of the file);
 # "summary" is the detail level the tool documents for retained evidence. Both values come from the advertised schema text.
@@ -89,7 +110,6 @@ FIXED_ARGS: Dict[str, Dict[str, Any]] = {HEALTH_TOOL: {}, MODEL_TOOL: {"hash": "
 MAX_SHARDS = 3  # at most this many weight files are header-inspected per model
 MAX_HEADER_BYTES = 8 * 1024 * 1024  # our own ceiling; REA's is 100 MB
 MAX_GGUF_WINDOW_BYTES = 8 * 1024 * 1024  # largest GGUF header window we will fetch (doubling stops here)
-MAX_VIEW_ROWS = 64  # rows requested from one inspect_analysis_view metadata page
 MAX_REMOTE_FILE_BYTES = 1 << 40  # 1 TiB: a remote size above this is treated as a lie, never as a sparse-file length
 MAX_OUTPUT_CHARS = 8_000  # stored per tool result
 INIT_TIMEOUT_S = 90.0
@@ -145,6 +165,8 @@ class ReaReport:
     reason: str = ""
     server: Dict[str, Any] = field(default_factory=dict)
     tools_discovered: int = 0
+    capabilities: List[str] = field(default_factory=list)  # advertised tools the capability policy would allow (reporting only)
+    investigation: List[Dict[str, Any]] = field(default_factory=list)  # capability-selected calls: {tool, target, reason, ok, detail}
     calls: List[ReaToolCall] = field(default_factory=list)
     header_summaries: List[Dict[str, Any]] = field(default_factory=list)  # parsed locally from the fetched header
     shards_total: int = 0
@@ -242,17 +264,18 @@ def _check_arguments(tool: str, schema: Mapping[str, Any], args: Mapping[str, An
 class ReaMcpClient:
     """MCP over stdio (newline-delimited JSON-RPC 2.0, UTF-8): initialize -> notifications/initialized -> tools/list -> tools/call.
 
-    Only ``ALLOWED_TOOLS`` can be called, and only with arguments that validate against the schema the server advertised.
-    The child process never inherits this app's tokens/API keys."""
+    Only tools the capability policy allows (see ``m2g.rea_capabilities``) can be called, and only with arguments that validate
+    against the schema the server advertised. The child process never inherits this app's tokens/API keys."""
 
     def __init__(self, command: Sequence[str], *, cwd: Optional[Path] = None, timeout: float = INIT_TIMEOUT_S,
                  call_timeout: float = CALL_TIMEOUT_S, environ: Optional[Mapping[str, str]] = None,
-                 popen: Callable[..., Any] = subprocess.Popen):
+                 popen: Callable[..., Any] = subprocess.Popen, policy: Optional[CapabilityPolicy] = None):
         self.command = list(command)
         self.cwd = str(cwd or PROJECT_ROOT)
         self.timeout, self.call_timeout = timeout, call_timeout
         self._environ = environ
         self._popen = popen
+        self.policy = policy or CapabilityPolicy()
         self._proc: Any = None
         self._inbox: "queue.Queue[Optional[Dict[str, Any]]]" = queue.Queue()
         self._stderr: List[str] = []
@@ -393,13 +416,14 @@ class ReaMcpClient:
         return tools
 
     def call_tool(self, name: str, arguments: Mapping[str, Any], *, target: str = "") -> ReaToolCall:
-        """Really call one allow-listed tool. A tool-level failure (``isError``, JSON-RPC error, timeout) is returned in the
-        record (``ok=False``); calls that violate the allow-list or the advertised schema raise ``ReaError`` and send nothing."""
-        if name not in ALLOWED_TOOLS:
-            raise ReaError(f"Tool '{name}' is not on the allow-list {list(ALLOWED_TOOLS)}; refused.")
+        """Really call one permitted tool. A tool-level failure (``isError``, JSON-RPC error, timeout) is returned in the
+        record (``ok=False``); calls that the capability policy or the advertised schema refuse raise ``ReaError`` and send nothing."""
         tool = self.tools.get(name)
         if tool is None:
             raise ReaError(f"This REA server does not advertise '{name}'.")
+        if name not in REQUIRED_TOOLS and not self.policy.eligible(tool):
+            raise ReaError(f"Tool '{name}' is refused by the capability policy (destructive or open-world, or it needs a target "
+                           "this analysis stage does not have).")
         args = dict(arguments)
         _check_arguments(name, tool.get("inputSchema") if isinstance(tool.get("inputSchema"), dict) else {}, args)
         started = time.monotonic()
@@ -878,7 +902,7 @@ def _run(rep: ReaReport, info: Any, fetcher: SafeFetcher, command: Optional[Sequ
     repo_id = model.source.repo_id
     listed_sizes = dict(model.files)
     rep.note(f"Plan: header-only inspection of {len(names)} of {total} weight file(s) in {repo_id}@{pin[:12]} "
-             f"with REA tools {list(ALLOWED_TOOLS)}.")
+             f"with the required REA tools {list(REQUIRED_TOOLS)}, plus capability-selected optional calls.")
 
     # Cheapest failures first: the launcher is checked before any network request is made.
     try:
@@ -937,7 +961,7 @@ def _run(rep: ReaReport, info: Any, fetcher: SafeFetcher, command: Optional[Sequ
         if use_cached:
             rep.note(f"Status check skipped: {HEALTH_TOOL} succeeded recently for this launcher.")
         rep.note(f"Starting REA MCP server: {' '.join(launcher)}")
-        planned = ([] if use_cached else [(HEALTH_TOOL, dict(FIXED_ARGS[HEALTH_TOOL]), "server status")]) + [
+        core_plan = ([] if use_cached else [(HEALTH_TOOL, dict(FIXED_ARGS[HEALTH_TOOL]), "server status")]) + [
             (MODEL_TOOL, {"path": str(p), **FIXED_ARGS[MODEL_TOOL]}, name) for name, p in files]
         try:
             with client_factory(launcher, cwd=project_dir) as client:
@@ -946,20 +970,22 @@ def _run(rep: ReaReport, info: Any, fetcher: SafeFetcher, command: Optional[Sequ
                 tools = client.list_tools()
                 rep.tools_discovered = len(tools)
                 rep.note(f"tools/list: {len(tools)} tools advertised")
-                missing = [t for t in (HEALTH_TOOL, MODEL_TOOL) if t not in tools]
+                missing = [t for t in REQUIRED_TOOLS if t not in tools]
                 if missing:
                     return _finish(rep, FAILED, f"This REA server does not advertise the required tool(s) {missing}; none was called.")
-                for tool, args, target in planned:
+                # Capability discovery: the tools the server advertises that the policy would let us call (reporting only).
+                rep.capabilities = known_safe_tools(tools, client.policy)
+                for tool, args, target in core_plan:
                     try:
                         call = client.call_tool(tool, args, target=target)
-                    except ReaError as exc:  # refused by the allow-list / schema check: nothing was sent
+                    except ReaError as exc:  # refused by the policy / schema check: nothing was sent
                         call = ReaToolCall(tool=tool, arguments=args, ok=False, target=target, error=f"not sent: {exc}")
                     rep.calls.append(call)
                     rep.note(f"tools/call {tool} [{target}] -> {'ok' if call.ok else 'FAILED: ' + str(call.error)[:160]} ({call.duration_s}s)")
-                # Deeper retained-Evidence pages are OPTIONAL: they add facts (e.g. a GGUF file's declared architecture) but a
-                # failure never changes the verdict, because the model inspection itself already succeeded.
-                if VIEW_TOOL in tools:
-                    _page_retained_metadata(rep, client)
+                # Iterative, capability-driven investigation: plan from what the core inspection produced (retained evidence
+                # ids) and what the analysis still needs, run the plan, then replan once with the new facts. Every extra call is
+                # OPTIONAL: a failure is recorded and noted but never changes the stage's verdict, which the core inspection set.
+                _capability_rounds(rep, client, files)
         except ReaError as exc:
             rep.note(f"REA transport/protocol problem: {exc}")
             if health_cache is not None:
@@ -1000,31 +1026,60 @@ def _run(rep: ReaReport, info: Any, fetcher: SafeFetcher, command: Optional[Sequ
     return _finish(rep, PARTIAL, "REA inspected part of the model: " + "; ".join(problems) + ".")
 
 
-def _page_retained_metadata(rep: ReaReport, client: ReaMcpClient) -> int:
-    """Best-effort deeper page of REA's retained Evidence for each inspected file (e.g. a GGUF file's declared metadata).
+def _capability_rounds(rep: ReaReport, client: ReaMcpClient, files: List[Tuple[str, Path]]) -> int:
+    """Iterative, capability-driven investigation on top of the header inspection.
 
-    The model-inspection call already returned a retained ``parent_evidence_id``; ``inspect_analysis_view`` pages it. A call that
-    the server refuses, that returns no id, or that fails is recorded and noted but never changes the stage's status: the header
-    inspection is the contract, this only adds facts. Returns the number of view calls made."""
+    Round 1: page the retained Evidence the model inspection just produced (addressed by the real ``parent_evidence_id``), and
+    fill the byte-level gap the header alone cannot (byte entropy) using only our own scratch files.
+    Round 2: after the new facts, ask the whole-session views (REA's residual-unknown ledger, the canonical Evidence bundle) -
+    the stopping condition is simply that the replan yields nothing new, so the loop is bounded by the plan, never by a step cap.
+
+    Every call here is OPTIONAL: a refused or failing call is recorded and noted but never changes the stage's verdict, which the
+    core header inspection already set."""
     made = 0
-    model_calls = [c for c in rep.calls if c.tool == MODEL_TOOL and c.ok]
-    for call in model_calls[:MAX_SHARDS]:
-        parent = _parent_evidence_id(call)
-        if not parent:
+    header_bytes = {str(s.get("file")): s.get("header_bytes") for s in rep.header_summaries if isinstance(s, dict)}
+    header_files = [(n, str(p), header_bytes.get(n)) for n, p in files]
+    base_gaps = [GAP_RETAINED_METADATA, GAP_BYTE_ENTROPY]
+    for round_no, gaps in enumerate((base_gaps, [GAP_RESIDUAL_UNKNOWNS, GAP_EVIDENCE_BUNDLE]), start=1):
+        ctx = PlanContext(available=client.tools, header_files=header_files,
+                          retained_ids=_retained_ids_by_target(rep), missing_evidence=gaps)
+        plan = plan_capability_investigation(ctx, client.policy)
+        if not plan:
+            rep.note(f"Capability round {round_no}: nothing new to investigate.")
             continue
-        args = {"source": {"kind": "retained-evidence", "evidence_id": parent},
-                "view": {"kind": "model-artifact", "collection": "metadata", "offset": 0, "limit": MAX_VIEW_ROWS}}
-        try:
-            view = client.call_tool(VIEW_TOOL, args, target=call.target)
-        except ReaError as exc:  # not sent (schema/allow-list): record but do not fail the stage
-            view = ReaToolCall(tool=VIEW_TOOL, arguments=args, ok=False, target=call.target, error=f"not sent: {exc}")
-        rep.calls.append(view)
-        made += 1
-        rep.note(f"tools/call {VIEW_TOOL} [{call.target}] -> {'ok' if view.ok else 'FAILED (optional): ' + str(view.error)[:120]} "
-                 f"({view.duration_s}s)")
+        rep.note(f"Capability round {round_no}: planned {len(plan)} call(s): {[c.tool for c in plan]}.")
+        for pc in plan:
+            try:
+                call = client.call_tool(pc.tool, pc.arguments, target=pc.target)
+            except ReaError as exc:  # refused by the policy / schema check: nothing was sent
+                call = ReaToolCall(tool=pc.tool, arguments=pc.arguments, ok=False, target=pc.target, error=f"not sent: {exc}")
+            rep.calls.append(call)
+            made += 1
+            rep.investigation.append({"tool": pc.tool, "target": pc.target, "reason": pc.reason, "ok": call.ok,
+                                      "detail": (str(call.error)[:160] if not call.ok else _brief(call.output))})
+            rep.note(f"tools/call {pc.tool} [{pc.target}] ({pc.reason}) -> "
+                     f"{'ok' if call.ok else 'FAILED (optional): ' + str(call.error)[:120]} ({call.duration_s}s)")
     if made:
-        rep.note(f"Retained-Evidence metadata pages requested for {made} file(s); these are optional and do not affect the status.")
+        rep.note(f"Capability investigation made {made} optional call(s); they never affect the status.")
     return made
+
+
+def _brief(output: str, limit: int = 160) -> str:
+    """A one-line summary of a tool output for the investigation log (never the full payload)."""
+    text = " ".join(str(output or "").split())
+    return text[:limit]
+
+
+def _retained_ids_by_target(rep: ReaReport) -> Dict[str, str]:
+    """Map each inspected file to the retained Evidence id its model-inspection result advertised (empty when none did)."""
+    out: Dict[str, str] = {}
+    for call in rep.calls:
+        if call.tool != MODEL_TOOL or not call.ok:
+            continue
+        evid = _parent_evidence_id(call)
+        if evid:
+            out[call.target] = evid
+    return out
 
 
 def make_runner(settings: Optional[Settings] = None, *, command: Optional[Sequence[str]] = None,

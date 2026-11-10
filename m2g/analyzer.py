@@ -1462,7 +1462,7 @@ def _rea_side(rea: Any) -> Dict[str, Any]:
     if not isinstance(rea, dict):
         return {"status": "not_invoked", "reason": "No REA result is attached to this analysis.", "usable": False, "coverage": "none",
                 "files_inspected": 0, "files_total": 0, "server": {}, "tools_executed": [], "files": [], "findings": [],
-                "weight_formats": [], "errors": []}
+                "weight_formats": [], "capabilities": [], "investigation": [], "errors": []}
     calls = [c for c in rea.get("calls") or [] if isinstance(c, dict)]
     ok_targets = {c.get("target") for c in calls if c.get("tool") == "inspect_model_artifact" and c.get("ok") is True}
     files = [{k: s.get(k) for k in ("file", "tensor_count", "parameters", "dtypes", "data_bytes", "logical_size",
@@ -1479,6 +1479,8 @@ def _rea_side(rea: Any) -> Dict[str, Any]:
         "tools_executed": [c.get("tool") for c in calls],
         "files": files,
         "weight_formats": formats,
+        "capabilities": [str(c)[:80] for c in (rea.get("capabilities") or [])],
+        "investigation": [i for i in (rea.get("investigation") or []) if isinstance(i, dict)][:20],
         "findings": [str(f)[:300] for f in (rea.get("findings") or [])[:6]],
         "errors": [str(c.get("error"))[:200] for c in calls if c.get("error")][:3],
     }
@@ -1511,6 +1513,26 @@ def _rea_weight_format_section(a: Analysis, side: Dict[str, Any]) -> Tuple[Dict[
         warnings.append("REA inspected a GGUF weight file's header (declarations only): GGUF files are not loadable by this "
                         "platform's generated transformers/diffusers apps, so this is analysis evidence only.")
     return section, warnings, conflicts
+
+
+def _rea_investigation_section(side: Dict[str, Any]) -> Tuple[Dict[str, Any], List[str]]:
+    """The capability-selected REA calls beyond the header inspection (retained-Evidence pages, byte entropy, residual-unknown
+    ledger, Evidence bundle). Purely additive: each entry keeps its tool, target and reason, and a failed optional call is
+    recorded as such rather than dropped. Returns (section, warnings)."""
+    inv = [i for i in (side.get("investigation") or []) if isinstance(i, dict)]
+    section: Dict[str, Any] = {"capabilities_advertised": list(side.get("capabilities") or []), "calls": []}
+    warnings: List[str] = []
+    ok = 0
+    for i in inv:
+        entry = {"tool": i.get("tool"), "target": i.get("target"), "reason": i.get("reason"), "ok": bool(i.get("ok")),
+                 "detail": str(i.get("detail") or "")[:160]}
+        section["calls"].append(entry)
+        if entry["ok"]:
+            ok += 1
+    if inv and ok < len(inv):
+        warnings.append(f"{len(inv) - ok} of {len(inv)} optional REA investigation call(s) did not complete; the header "
+                        "inspection is unaffected.")
+    return section, warnings
 
 
 def _compare_parameters(a: Analysis, side: Dict[str, Any]) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
@@ -1574,10 +1596,11 @@ def build_combined_analysis(a: Analysis) -> Dict[str, Any]:
     status = side["status"]
     comparison, conflicts = _compare_parameters(a, side)
     weight_format, wf_warnings, wf_conflicts = _rea_weight_format_section(a, side)
+    investigation, inv_warnings = _rea_investigation_section(side)
     conflicts = [*conflicts, *wf_conflicts]
     py_warnings = [w for w in a.warnings if not _is_rea_note(w)]
     py_uncertainties = [u for u in a.uncertainties if not _is_rea_note(u)]
-    rea_warnings: List[str] = list(wf_warnings)
+    rea_warnings: List[str] = [*wf_warnings, *inv_warnings]
     rea_uncertainties: List[str] = []
     recs: List[str] = []
     reason = side["reason"]
@@ -1629,6 +1652,10 @@ def build_combined_analysis(a: Analysis) -> Dict[str, Any]:
         evidence.append({"origin": "rea", "signal": "safetensors_header",
                          "detail": f"{f.get('file')}: {f.get('tensor_count')} tensors, {f.get('parameters')} parameters, dtypes "
                                    + (", ".join(f"{k} ({v})" for k, v in dtypes.items()) or "none")})
+    for i in investigation["calls"]:
+        if i["ok"]:
+            evidence.append({"origin": "rea", "signal": f"rea:{i['tool']}",
+                             "detail": f"{i['target']}: {i['detail']}" if i["target"] else str(i["detail"])})
 
     levels = {"agree": "corroborated", "conflict": "conflicting", "python_only": "python_only", "rea_only": "rea_only",
               "not_comparable": "unverified", "unknown": "unknown"}
@@ -1649,6 +1676,7 @@ def build_combined_analysis(a: Analysis) -> Dict[str, Any]:
         "rea_analysis": side,
         "parameter_comparison": comparison,
         "weight_format": weight_format,
+        "rea_investigation": investigation,
         "conflicts": conflicts,
         "confidence": {"task": a.task_confidence, "task_basis": "python_analyzer only",
                        "parameter_count": levels.get(comparison["verdict"], "unknown"), "rea_coverage": side["coverage"]},
