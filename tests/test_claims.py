@@ -106,5 +106,80 @@ class TestReport(unittest.TestCase):
         self.assertEqual(rep["schema_version"], "1.0")
 
 
+class TestEvidenceBundleRefs(unittest.TestCase):
+    """``refs_from_evidence`` must read the evidence digest's ``items`` MAPPING (its real shape), not a list."""
+
+    def _a(self, items):
+        a = SimpleNamespace(task=None, task_confidence=0.0, capabilities=[], task_evidence=[], dependency_evidence={},
+                            frameworks=[], native={}, uncertainties=[], library="unknown", revision=None)
+        a.evidence = {"items": items}
+        return a
+
+    def test_the_dict_shape_is_read(self):
+        a = self._a({"file:config.json": {"kind": "json", "status": "collected", "location": "config.json"}})
+        refs = C.refs_from_evidence(a)
+        self.assertEqual([r.id for r in refs], ["ev:file:config.json"])
+
+    def test_the_list_shape_is_also_read(self):
+        a = self._a([{"key": "file:config.json", "kind": "json", "status": "collected"}])
+        self.assertEqual([r.id for r in C.refs_from_evidence(a)], ["ev:file:config.json"])
+
+    def test_a_collected_tensor_header_yields_a_parameter_and_format_ref(self):
+        a = self._a({"tensors:file:model.safetensors": {"kind": "tensor-header", "status": "collected",
+                                                        "tensor_summary": {"format": "safetensors", "parameters": 12345}}})
+        by_field = {}
+        for r in C.refs_from_evidence(a):
+            by_field.setdefault(r.field, []).append(r.value)
+        self.assertEqual(by_field["parameter_count"], [12345])
+        self.assertEqual(by_field["weight_format"], ["safetensors"])
+
+    def test_unusable_items_contribute_nothing(self):
+        a = self._a({"file:config.json": {"kind": "json", "status": "inaccessible"}})
+        self.assertEqual(C.refs_from_evidence(a), [])
+
+
+class TestReaRefs(unittest.TestCase):
+    """REA's own header read becomes claim evidence; a failed/absent inspection never becomes a 'verified' fact."""
+
+    def _a(self, rea):
+        a = SimpleNamespace(task="text-classification", task_confidence=0.9, capabilities=[], task_evidence=[],
+                            dependency_evidence={}, frameworks=["PyTorch"], native={}, uncertainties=[], library="pytorch",
+                            revision="abc", evidence=None)
+        a.rea = rea
+        a.hardware = SimpleNamespace(params=1000, params_source="hub")
+        return a
+
+    def test_rea_header_summaries_become_parameter_format_and_architecture_refs(self):
+        a = self._a({"header_summaries": [{"file": "model.safetensors", "format": "safetensors", "parameters": 1000,
+                                           "architecture": "llama"}],
+                     "calls": [{"tool": "inspect_model_artifact", "ok": True, "target": "model.safetensors", "output": "ok"}]})
+        claims = {c.field: c for c in C.build_claims(a)}
+        self.assertEqual(claims["parameter_count"].value, 1000)
+        self.assertEqual(claims["parameter_count"].status, C.VERIFIED)  # python + rea agree
+        self.assertIn("safetensors", claims["weight_format"].value)
+        self.assertIn("llama", claims["architecture"].value)
+        self.assertTrue(claims["rea_evidence"].supporting)
+
+    def test_a_disagreement_between_python_and_rea_is_a_conflict(self):
+        a = self._a({"header_summaries": [{"file": "model.safetensors", "format": "safetensors", "parameters": 2000}],
+                     "calls": [{"tool": "inspect_model_artifact", "ok": True, "target": "model.safetensors", "output": "ok"}]})
+        claims = {c.field: c for c in C.build_claims(a)}
+        self.assertEqual(claims["parameter_count"].status, C.CONFLICTED)
+        self.assertEqual(claims["parameter_count"].supporting, ["py:params"])
+        self.assertIn("rea:params:total", claims["parameter_count"].contradicting)
+
+    def test_a_failed_rea_call_contributes_no_reference(self):
+        a = self._a({"header_summaries": [], "calls": [{"tool": "inspect_model_artifact", "ok": False, "error": "refused"}]})
+        claims = {c.field: c for c in C.build_claims(a)}
+        self.assertEqual(claims["rea_evidence"].status, C.UNKNOWN)
+        self.assertEqual(claims["rea_evidence"].confidence, 0.0)
+
+    def test_no_rea_result_leaves_the_rea_claims_unknown(self):
+        a = self._a(None)
+        claims = {c.field: c for c in C.build_claims(a)}
+        self.assertEqual(claims["rea_evidence"].status, C.UNKNOWN)
+        self.assertEqual(claims["rea_investigation"].status, C.UNKNOWN)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -16,10 +16,16 @@ What REA is used for here, and which tools
                                 when the model-inspection result advertises a retained ``parent_evidence_id``; it reads no bytes
                                 from disk and reopens nothing.
   * capability-selected tools    the analysis raises evidence gaps (retained metadata, byte entropy, residual unknowns, the
-                                Evidence bundle); the planner resolves each to a tool the server advertises that the policy permits
-                                (never destructive, never open-world, and only with arguments this platform can supply) and calls it
-                                with arguments filtered to that tool's own schema. These calls are OPTIONAL: a failure is recorded
-                                and noted but never changes the stage's verdict.
+                                Evidence bundle, and the platform's own source-analysis gaps); the planner resolves each to a
+                                tool the server advertises that the policy permits (never destructive, never open-world, and only
+                                with arguments this platform can supply) and calls it with arguments filtered to that tool's own
+                                schema. A tool tagged for SOURCE TEXT (``source_text``) is handed the ALREADY-COLLECTED source,
+                                staged read-only inside the scratch dir (no extra download, nothing executed). These calls are
+                                OPTIONAL: a failure is recorded and noted but never changes the stage's verdict. Questions no
+                                eligible capability can answer stay recorded as open gaps (``source_questions``), never invented.
+  * ``prompts/list``            the MCP prompt templates the server advertises are discovered read-only and recorded
+                                (``prompts``); applying one needs a model to render it, which this deterministic stage does not
+                                have, so a template is surfaced, never fabricated or auto-applied.
 
 How a header-only inspection works (sparse files)
   ``inspect_model_artifact`` validates the tensor offsets declared in the header against the file's LOGICAL size, so a file that
@@ -80,6 +86,7 @@ from .rea_capabilities import (
     plan_questions,
     state_signature,
     tag_tools,
+    unanswered_source_questions,
 )
 from .security import (
     FetchError,
@@ -110,6 +117,7 @@ ALLOWED_TOOLS = (HEALTH_TOOL, MODEL_TOOL, VIEW_TOOL)
 FIXED_ARGS: Dict[str, Dict[str, Any]] = {HEALTH_TOOL: {}, MODEL_TOOL: {"hash": "header", "detail": "summary"}}
 
 MAX_SHARDS = 3  # at most this many weight files are header-inspected per model
+MAX_SOURCE_FILES = 24  # at most this many already-collected source/config files are staged as read-only scratch copies for REA
 MAX_HEADER_BYTES = 8 * 1024 * 1024  # our own ceiling; REA's is 100 MB
 MAX_GGUF_WINDOW_BYTES = 8 * 1024 * 1024  # largest GGUF header window we will fetch (doubling stops here)
 MAX_REMOTE_FILE_BYTES = 1 << 40  # 1 TiB: a remote size above this is treated as a lie, never as a sparse-file length
@@ -174,6 +182,8 @@ class ReaReport:
     capabilities_by_tag: Dict[str, List[str]] = field(default_factory=dict)  # capability tag -> eligible tool names
     refusals: Dict[str, str] = field(default_factory=dict)  # advertised tool -> why the policy refuses it (reporting only)
     questions: List[Dict[str, Any]] = field(default_factory=list)  # evidence-gap questions raised, with whether they were answered
+    source_questions: List[Dict[str, Any]] = field(default_factory=list)  # source questions the Analyzer raised that no advertised tool could answer (recorded gaps)
+    prompts: List[Dict[str, Any]] = field(default_factory=list)  # MCP prompt templates the server advertises (discovered, never rendered)
     investigation: List[Dict[str, Any]] = field(default_factory=list)  # capability-selected calls: {tool, target, reason, ok, detail}
     stop_reason: str = ""  # why the adaptive investigation stopped (evidence complete / no capability / no progress / budget)
     budget: Dict[str, Any] = field(default_factory=dict)  # the resource budget the loop ran under, and what it used
@@ -428,6 +438,30 @@ class ReaMcpClient:
                 break
         self.tools = tools
         return tools
+
+    def list_prompts(self) -> List[Dict[str, Any]]:
+        """Discover the prompts the server advertises (read-only MCP ``prompts/list``).
+
+        MCP prompts are reusable TEMPLATES: applying one needs a model to fill it, which this deterministic analysis stage does not
+        have. Discovery is therefore the meaningful use of the capability here - it records what the server offers (so the report
+        is honest about the server's surface) without pretending a template was rendered. A server that does not implement
+        ``prompts/list`` (or answers with an error) simply yields an empty list; nothing is invented."""
+        prompts: List[Dict[str, Any]] = []
+        cursor: Optional[str] = None
+        try:
+            for _page in range(20):
+                res = self._request("prompts/list", {"cursor": cursor} if cursor else {}, self.timeout)
+                for p in res.get("prompts") or []:
+                    if isinstance(p, dict) and isinstance(p.get("name"), str):
+                        prompts.append({"name": str(p["name"])[:80], "description": str(p.get("description") or "")[:200],
+                                        "arguments": [str(a.get("name"))[:40] for a in (p.get("arguments") or [])
+                                                      if isinstance(a, dict) and a.get("name")]})
+                cursor = res.get("nextCursor") if isinstance(res.get("nextCursor"), str) else None
+                if not cursor:
+                    break
+        except ReaError:  # the method is optional in MCP; an unsupported/absent prompt list is not a failure
+            return []
+        return prompts
 
     def call_tool(self, name: str, arguments: Mapping[str, Any], *, target: str = "") -> ReaToolCall:
         """Really call one permitted tool. A tool-level failure (``isError``, JSON-RPC error, timeout) is returned in the
@@ -965,6 +999,10 @@ def _run(rep: ReaReport, info: Any, fetcher: SafeFetcher, command: Optional[Sequ
         files: List[Tuple[str, Path]] = []
         stats: Dict[str, int] = {}
         header_failures = sparse_failures = 0
+        # Analyzer-informed investigation: read the facts and open gaps the platform's own static analysis already produced, and
+        # stage a read-only copy of the already-collected source for REA to investigate. Neither step fetches or executes anything.
+        analyzer = _analyzer_facts(info)
+        source_files = _stage_source(info, scratch, rep, MAX_SOURCE_FILES)
         for i, (name, fmt) in enumerate(targets):
             try:
                 remote = fmt.fetch(fetcher, repo_id, pin, name, expected_size=listed_sizes.get(name), stats=stats, provider=provider)
@@ -1008,6 +1046,10 @@ def _run(rep: ReaReport, info: Any, fetcher: SafeFetcher, command: Optional[Sequ
                 tools = client.list_tools()
                 rep.tools_discovered = len(tools)
                 rep.note(f"tools/list: {len(tools)} tools advertised")
+                rep.prompts = client.list_prompts()  # read-only discovery of the MCP prompt templates the server advertises
+                if rep.prompts:
+                    rep.note(f"prompts/list: {len(rep.prompts)} prompt template(s) advertised (recorded; a template needs a model "
+                             "to render and this stage is deterministic)")
                 missing = [t for t in REQUIRED_TOOLS if t not in tools]
                 if missing:
                     return _finish(rep, FAILED, f"This REA server does not advertise the required tool(s) {missing}; none was called.")
@@ -1031,7 +1073,8 @@ def _run(rep: ReaReport, info: Any, fetcher: SafeFetcher, command: Optional[Sequ
                 # produced, plan the eligible tools that can answer them, execute, fold the results back in, and replan until the
                 # questions are exhausted (or no capability answers them, or a step stops producing evidence, or the budget is
                 # spent). Every extra call is OPTIONAL: a failure is recorded and noted but never changes the stage's verdict.
-                _adaptive_investigation(rep, client, files, header_ok=bool(rep.header_summaries), budget=budget)
+                _adaptive_investigation(rep, client, files, header_ok=bool(rep.header_summaries), budget=budget,
+                                        source_files=source_files, analyzer=analyzer)
         except ReaError as exc:
             rep.note(f"REA transport/protocol problem: {exc}")
             if health_cache is not None:
@@ -1072,11 +1115,63 @@ def _run(rep: ReaReport, info: Any, fetcher: SafeFetcher, command: Optional[Sequ
     return _finish(rep, PARTIAL, "REA inspected part of the model: " + "; ".join(problems) + ".")
 
 
-def _evidence_state(rep: ReaReport, files: List[Tuple[str, Path]], *, header_ok: bool) -> EvidenceState:
+def _analyzer_facts(info: Any) -> Dict[str, Any]:
+    """The Analyzer's own established facts, read from the static source analysis the platform already ran.
+
+    This is what makes REA's investigation Analyzer-INFORMED: the source questions REA is asked are raised only for the facts the
+    platform's own analysis could NOT establish (unconfirmed architecture, no loading site, an incomplete I/O contract), instead
+    of REA guessing what might be missing. Nothing here is fetched or executed."""
+    facts = {"architecture_known": False, "loading_known": False, "io_known": False}
+    cfg = getattr(info, "config", None)
+    if isinstance(cfg, dict) and (cfg.get("architectures") or cfg.get("model_type")):
+        facts["architecture_known"] = True
+    src = getattr(info, "source_analysis", None)
+    if src is None:
+        return facts
+    try:
+        facts["loading_known"] = bool(getattr(src, "load_sites", None))
+        io = getattr(src, "io_contract", {}) or {}
+        facts["io_known"] = bool(io.get("inputs")) and bool(io.get("outputs"))
+    except Exception:  # a malformed source analysis must never break the REA stage
+        return facts
+    return facts
+
+
+def _stage_source(info: Any, scratch: Path, rep: ReaReport, limit: int) -> List[Tuple[str, Path]]:
+    """Write a bounded, read-only copy of the already-collected source/config text into the scratch dir, for REA to read.
+
+    Only files the inspector ALREADY fetched (``info.source_text``) are copied: nothing new is downloaded, no repository code is
+    imported or executed, and every path is contained within the project by ``ensure_within``. Returns (repo path, scratch path)
+    for the files that were written. The files are removed with the rest of the scratch tree."""
+    out: List[Tuple[str, Path]] = []
+    text = getattr(info, "source_text", None)
+    if not isinstance(text, dict) or not text:
+        return out
+    sub = scratch / "source"
+    for i, (name, body) in enumerate(sorted(text.items())):
+        if len(out) >= limit or not isinstance(body, str):
+            break
+        try:
+            path = ensure_within(scratch, sub / f"src_{i}_{Path(name).name}")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(body, encoding="utf-8")
+        except (OSError, SecurityError) as exc:
+            rep.note(f"Source file {name} could not be staged for REA: {type(exc).__name__}")
+            continue
+        out.append((name, path))
+    if out:
+        rep.note(f"Staged {len(out)} already-collected source/config file(s) as read-only scratch copies for REA "
+                 f"(no extra download, nothing executed).")
+    return out
+
+
+def _evidence_state(rep: ReaReport, files: List[Tuple[str, Path]], *, header_ok: bool,
+                    source_files: Sequence[Tuple[str, Path]] = (), analyzer: Optional[Dict[str, Any]] = None) -> EvidenceState:
     """Build the evidence state the question generators read, from the facts the header inspection already produced.
 
     ``capabilities`` is the tag -> eligible-tool map discovered from the advertised metadata; a capability the server does not
-    advertise is simply absent, so no question that needs it is raised."""
+    advertise is simply absent, so no question that needs it is raised. ``source_files`` are the staged source copies (empty when
+    none were staged) and ``analyzer`` carries the Analyzer's own established facts and open gaps."""
     by_file = {str(s.get("file")): s for s in rep.header_summaries if isinstance(s, dict)}
     header_bytes = {n: int((by_file.get(n) or {}).get("header_bytes") or 0) for n, _ in files}
     formats = {n: str((by_file.get(n) or {}).get("format") or "") for n, _ in files}
@@ -1085,6 +1180,7 @@ def _evidence_state(rep: ReaReport, files: List[Tuple[str, Path]], *, header_ok:
     inspected = sum(1 for c in rep.calls if c.tool == MODEL_TOOL and c.ok)
     partial = bool(rep.shards_total and inspected < rep.shards_total)
     retained = {evid: target for target, evid in _retained_ids_by_target(rep).items() if isinstance(evid, str)}
+    a = analyzer or {}
     return EvidenceState(
         files=[(n, str(p)) for n, p in files],
         header_bytes=header_bytes,
@@ -1095,11 +1191,16 @@ def _evidence_state(rep: ReaReport, files: List[Tuple[str, Path]], *, header_ok:
         coverage_partial=partial,
         capabilities=dict(rep.capabilities_by_tag or tag_tools(rep._tools, rep._policy)),
         tools=rep._tools,
+        source_files=[(n, str(p)) for n, p in source_files],
+        architecture_known=bool(a.get("architecture_known")),
+        loading_known=bool(a.get("loading_known")),
+        io_known=bool(a.get("io_known")),
     )
 
 
 def _adaptive_investigation(rep: ReaReport, client: ReaMcpClient, files: List[Tuple[str, Path]], *, header_ok: bool,
-                            budget: Optional[Budget] = None) -> int:
+                            budget: Optional[Budget] = None, source_files: Sequence[Tuple[str, Path]] = (),
+                            analyzer: Optional[Dict[str, Any]] = None) -> int:
     """Adaptive, evidence-driven investigation on top of the header inspection.
 
     The loop is: read the collected evidence -> raise the open questions -> plan the eligible tools that can answer them ->
@@ -1112,7 +1213,7 @@ def _adaptive_investigation(rep: ReaReport, client: ReaMcpClient, files: List[Tu
     core header inspection already set."""
     budget = budget or Budget(max_calls=MAX_INVESTIGATION_CALLS, max_seconds=MAX_INVESTIGATION_SECONDS,
                               max_failures=MAX_INVESTIGATION_FAILURES)
-    state = _evidence_state(rep, files, header_ok=header_ok)
+    state = _evidence_state(rep, files, header_ok=header_ok, source_files=source_files, analyzer=analyzer)
     seen: Set[Tuple[str, str]] = set()
     made = failures = 0
     stop = "the open questions were exhausted"
@@ -1120,6 +1221,10 @@ def _adaptive_investigation(rep: ReaReport, client: ReaMcpClient, files: List[Tu
     while True:
         questions = generate_questions(state)
         rep.questions = [{"qid": q.qid, "kind": q.kind, "target": q.target, "text": q.text} for q in questions]
+        # The source questions the Analyzer's own gaps raised that no advertised capability can answer: kept as recorded gaps.
+        gaps = unanswered_source_questions(state)
+        if gaps:
+            rep.source_questions = [{"target": q.target, "text": q.text} for q in gaps]
         plan = filter_plan(plan_questions(state, questions, client.policy, client.tools), client.tools, client.policy)
         plan = [pc for pc in plan if (pc.tool, pc.target) not in seen]  # duplicate-call prevention
         if not plan:

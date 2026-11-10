@@ -816,6 +816,10 @@ def analyze_hf(info: RepoInfo, settings: Optional[Settings] = None) -> Analysis:
     a.output_modalities = list(dict.fromkeys(m for c in iface for m in c.output_modalities))
     a.primary_model = info.source.repo_id
     a.uncertainties += [n for n in notes]
+    # A Hugging Face repo that ships custom code (config.auto_map / custom_code) has that code analysed statically, exactly as the
+    # GitHub path does: loading sites, entry points and an evidence-backed I/O contract, all additive. Absent custom code this is
+    # a no-op, so the ordinary metadata analysis is unchanged.
+    _apply_source_analysis(a, info, {})
     if a.hardware.params_source.startswith(("estimated", "rough")) or not a.hardware.params:
         a.uncertainties.append(f"Parameter count: {a.hardware.params_source}.")
     if task and conf < 0.6:
@@ -1264,7 +1268,8 @@ def _apply_source_analysis(a: Analysis, info: RepoInfo, fw_evidence: Dict[str, s
     This only ever ADDS evidence: framework observations from real loading/inference calls, loading sites, entry points, the
     static import/call graphs and an evidence-backed I/O contract digest go into ``a.ui_hints['source_analysis']``. Coverage
     gaps and unresolved imports become uncertainties. Nothing here is executed, imported or assumed: when the analysis did not
-    run (Hugging Face repos, or a fetch that produced no modules) the function is a no-op."""
+    run (a repo that ships no source, or a fetch that produced no modules) the function is a no-op. It applies to the GitHub
+    path and to a Hugging Face repo that ships custom code (``config.auto_map`` / ``custom_code``)."""
     src = getattr(info, "source_analysis", None)
     if src is None:
         return
@@ -1555,7 +1560,7 @@ def _rea_side(rea: Any) -> Dict[str, Any]:
         return {"status": "not_invoked", "reason": "No REA result is attached to this analysis.", "usable": False, "coverage": "none",
                 "files_inspected": 0, "files_total": 0, "server": {}, "tools_executed": [], "files": [], "findings": [],
                 "weight_formats": [], "capabilities": [], "capabilities_by_tag": {}, "refusals": {}, "questions": [],
-                "investigation": [], "stop_reason": "", "budget": {}, "errors": []}
+                "source_questions": [], "prompts": [], "investigation": [], "stop_reason": "", "budget": {}, "errors": []}
     calls = [c for c in rea.get("calls") or [] if isinstance(c, dict)]
     ok_targets = {c.get("target") for c in calls if c.get("tool") == "inspect_model_artifact" and c.get("ok") is True}
     files = [{k: s.get(k) for k in ("file", "tensor_count", "parameters", "dtypes", "data_bytes", "logical_size",
@@ -1576,6 +1581,8 @@ def _rea_side(rea: Any) -> Dict[str, Any]:
         "capabilities_by_tag": {str(k): [str(t)[:80] for t in v] for k, v in (rea.get("capabilities_by_tag") or {}).items()},
         "refusals": {str(k): str(v)[:160] for k, v in (rea.get("refusals") or {}).items()},
         "questions": [q for q in (rea.get("questions") or []) if isinstance(q, dict)][:20],
+        "source_questions": [q for q in (rea.get("source_questions") or []) if isinstance(q, dict)][:20],
+        "prompts": [p for p in (rea.get("prompts") or []) if isinstance(p, dict)][:20],
         "investigation": [i for i in (rea.get("investigation") or []) if isinstance(i, dict)][:20],
         "stop_reason": str(rea.get("stop_reason") or "")[:200],
         "budget": rea.get("budget") if isinstance(rea.get("budget"), dict) else {},
@@ -1628,6 +1635,10 @@ def _rea_investigation_section(side: Dict[str, Any]) -> Tuple[Dict[str, Any], Li
         "budget": dict(side.get("budget") or {}),
         "questions": [{"qid": q.get("qid"), "kind": q.get("kind"), "target": q.get("target"), "text": str(q.get("text") or "")[:200],
                        "answered": q.get("qid") in answered} for q in (side.get("questions") or []) if isinstance(q, dict)],
+        "source_questions": [{"target": q.get("target"), "text": str(q.get("text") or "")[:200]}
+                             for q in (side.get("source_questions") or []) if isinstance(q, dict)],
+        "prompts": [{"name": p.get("name"), "description": str(p.get("description") or "")[:160],
+                     "arguments": list(p.get("arguments") or [])[:8]} for p in (side.get("prompts") or []) if isinstance(p, dict)],
         "calls": [],
     }
     warnings: List[str] = []
@@ -1641,6 +1652,10 @@ def _rea_investigation_section(side: Dict[str, Any]) -> Tuple[Dict[str, Any], Li
     if inv and ok < len(inv):
         warnings.append(f"{len(inv) - ok} of {len(inv)} optional REA investigation call(s) did not complete; the header "
                         "inspection is unaffected.")
+    if section["source_questions"]:
+        warnings.append(f"{len(section['source_questions'])} source question(s) the static analysis could not answer could not be "
+                        "resolved by REA either: this REA server advertises no tool that returns local source text, so they remain "
+                        "open (recorded in rea_investigation.source_questions).")
     return section, warnings
 
 

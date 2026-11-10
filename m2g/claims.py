@@ -171,23 +171,107 @@ def refs_from_analysis(a: Any) -> List[EvidenceRef]:
     for i, s in enumerate(native.get("signals") or []):
         refs.append(EvidenceRef(f"py:native:{i}", "repository_classification", "repository", STRUCTURAL, value=s,
                                 detail=str(s), location="native.signals", agrees=None))
+    # The Python Analyzer's own parameter figure (Hub safetensors metadata, or a size-based estimate). Recorded so REA's header
+    # read and the collected evidence can corroborate or contradict it in the parameter_count claim.
+    hw = getattr(a, "hardware", None)
+    params = getattr(hw, "params", None)
+    if isinstance(params, int) and not isinstance(params, bool):
+        refs.append(EvidenceRef("py:params", "parameter_count", "python_analyzer", STRUCTURAL, value=params,
+                                detail=f"{params:,} parameters ({getattr(hw, 'params_source', 'unknown source')})",
+                                location="hardware.params", agrees=None))
     return refs
 
 
 def refs_from_evidence(a: Any) -> List[EvidenceRef]:
-    """References from the Phase-1 evidence bundle (only ``collected`` items are established facts)."""
+    """References from the Phase-1 evidence bundle (only ``collected`` items are established facts).
+
+    ``build_evidence_digest`` stores ``items`` as a keyed mapping; older callers and unit tests may pass a list. Both shapes are
+    accepted so a collected fact is never silently dropped. A collected tensor-header item additionally contributes the one
+    aggregate parameter count and the weight format it declared, which is what the ``parameter_count``/``weight_format`` claims
+    corroborate against."""
     refs: List[EvidenceRef] = []
     bundle = getattr(a, "evidence", None) or {}
     items = bundle.get("items") if isinstance(bundle, dict) else None
     if not items:
         return refs
-    for it in items:
+    rows = list(items.items()) if isinstance(items, dict) else [(None, it) for it in items]
+    total_params = 0
+    saw_params = False
+    for key, it in rows:
         if not isinstance(it, dict) or it.get("status") != "collected":
             continue
-        prov = it.get("provenance") or {}
-        refs.append(EvidenceRef(f"ev:{it.get('key')}", str(it.get("kind", "")), "evidence", DIRECT,
-                                value=it.get("key"), detail=str(it.get("error") or it.get("kind") or ""),
-                                location=str(prov.get("location", "")), agrees=None))
+        ident = key or it.get("key")
+        location = str(it.get("location") or (it.get("provenance") or {}).get("location") or ident or "")
+        refs.append(EvidenceRef(f"ev:{ident}", str(it.get("kind", "")), "evidence", DIRECT,
+                                value=ident, detail=str(it.get("error") or it.get("kind") or ""), location=location, agrees=None))
+        ts = it.get("tensor_summary") if isinstance(it.get("tensor_summary"), dict) else None
+        if ts and _num(ts.get("parameters")) is not None:
+            total_params += int(ts["parameters"])
+            saw_params = True
+        if ts and ts.get("format"):
+            refs.append(EvidenceRef(f"ev:{ident}:fmt", "weight_format", "evidence", DIRECT, value=ts.get("format"),
+                                    detail=f"{ident} declares format {ts.get('format')}", location=location, agrees=None))
+    if saw_params:
+        refs.append(EvidenceRef("ev:params:total", "parameter_count", "evidence", DIRECT, value=total_params,
+                                detail="sum of the collected safetensors/GGUF header declarations", location="evidence bundle",
+                                agrees=None))
+    return refs
+
+
+def _num(value: Any) -> Optional[int]:
+    """A parameter count as an int, or None when the value is not a number."""
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    return None
+
+
+def refs_from_rea(a: Any) -> List[EvidenceRef]:
+    """References from the REA inspection result already attached to the analysis (``a.rea``).
+
+    REA read the weight files' own headers, so its declarations are DIRECT observations of the artifact. Everything here is
+    read from data the analysis already holds: nothing is re-inspected and nothing is invented. A REA finding that failed or a
+    tool that was never called contributes no reference, so an unsupported claim can never be 'verified' by REA."""
+    rea = getattr(a, "rea", None)
+    if not isinstance(rea, dict):
+        return []
+    refs: List[EvidenceRef] = []
+    params_total = 0
+    saw_params = False
+    for s in rea.get("header_summaries") or []:
+        if not isinstance(s, dict):
+            continue
+        file = str(s.get("file") or "weight file")
+        if _num(s.get("parameters")) is not None:
+            params_total += int(s["parameters"])
+            saw_params = True
+        if s.get("format"):
+            refs.append(EvidenceRef(f"rea:fmt:{file}", "weight_format", "rea", DIRECT, value=str(s["format"]),
+                                    detail=f"REA read the header of {file}", location=file, agrees=None))
+        if s.get("architecture"):
+            refs.append(EvidenceRef(f"rea:arch:{file}", "architecture", "rea", DIRECT, value=str(s["architecture"]),
+                                    detail=f"the header of {file} declares architecture {s['architecture']}",
+                                    location=file, agrees=None))
+    if saw_params:
+        refs.append(EvidenceRef("rea:params:total", "parameter_count", "rea", DIRECT, value=params_total,
+                                detail="sum of the safetensors/GGUF header declarations REA read", location="REA header inspection",
+                                agrees=None))
+    for i, call in enumerate(rea.get("calls") or []):
+        if not isinstance(call, dict) or not call.get("ok"):
+            continue
+        tool = str(call.get("tool") or "tool")
+        target = str(call.get("target") or "")
+        refs.append(EvidenceRef(f"rea:call:{i}:{tool}", "rea_evidence", "rea", DIRECT, value=tool,
+                                detail=str(call.get("output") or "REA observation")[:200], location=target, agrees=None))
+    for i, inv in enumerate(rea.get("investigation") or []):
+        if not isinstance(inv, dict) or not inv.get("ok"):
+            continue
+        refs.append(EvidenceRef(f"rea:inv:{i}:{inv.get('tool')}", "rea_investigation", "rea", DIRECT, value=inv.get("tool"),
+                                detail=str(inv.get("question") or inv.get("detail") or "")[:200],
+                                location=str(inv.get("target") or ""), agrees=None))
     return refs
 
 
@@ -214,8 +298,13 @@ def refs_from_source_analysis(src: Any) -> List[EvidenceRef]:
 
 
 def build_claims(a: Any, repo: Any = None, src: Any = None) -> List[Claim]:
-    """Build the validated claim set for an analysis. Every claim names the evidence behind it."""
-    refs = [*refs_from_analysis(a), *refs_from_evidence(a), *refs_from_source_analysis(src)]
+    """Build the validated claim set for an analysis. Every claim names the evidence behind it.
+
+    Evidence comes from four independent producers: the Python Analyzer (``refs_from_analysis``), the Phase-1 evidence bundle
+    (``refs_from_evidence``), the deep source analysis (``refs_from_source_analysis``) and the REA inspection
+    (``refs_from_rea``). Keeping them separate is what lets a claim be CONFLICTED when, for example, the Hub metadata and REA's
+    header inspection disagree about the parameter count."""
+    refs = [*refs_from_analysis(a), *refs_from_evidence(a), *refs_from_source_analysis(src), *refs_from_rea(a)]
     by_field: Dict[str, List[EvidenceRef]] = {}
     for r in refs:
         by_field.setdefault(r.field, []).append(r)
@@ -254,6 +343,51 @@ def build_claims(a: Any, repo: Any = None, src: Any = None) -> List[Claim]:
         claims.append(validate(field_name, values or None, f_refs,
                                unknowns=[] if values else [f"{field_name} (no static preprocessing/inference evidence)"],
                                limitations=["input/output fields come from static signatures and calls, never from running the model"]))
+
+    # parameter count: Python (Hub metadata / size estimate), the collected evidence headers, and REA's own header read. Each is
+    # an independent observation of the same quantity, so they corroborate when they agree and CONFLICT (keeping both values)
+    # when they do not.
+    params = by_field.get("parameter_count", [])
+    values = sorted({_num(r.value) for r in params if _num(r.value) is not None})
+    if len(values) > 1:  # disagreement: every ref supports the value it names, none of them support the others
+        p_refs = [EvidenceRef(r.id, r.field, r.source_kind, r.directness, r.value, r.detail, r.location, agrees=(r.value == values[0]))
+                  for r in params]
+    else:  # agreement (or a single observation): every ref supports the one value
+        p_refs = [EvidenceRef(r.id, r.field, r.source_kind, r.directness, r.value, r.detail, r.location,
+                              agrees=(_num(r.value) == values[0]) if values else None) for r in params]
+    claims.append(validate("parameter_count", values[0] if len(values) == 1 else (values or None), p_refs,
+                           unknowns=[] if values else ["parameter count"],
+                           limitations=["weight files are read by header only; tensor values are never inspected"],
+                           coverage_gap=coverage_gap))
+
+    # weight format(s): what the files declare, from the evidence bundle and REA's header read.
+    fmts = by_field.get("weight_format", [])
+    fmt_values = sorted({str(r.value) for r in fmts if r.value})
+    claims.append(validate("weight_format", fmt_values or None,
+                           [EvidenceRef(r.id, r.field, r.source_kind, r.directness, r.value, r.detail, r.location,
+                                        agrees=(str(r.value) in fmt_values) if fmt_values else None) for r in fmts],
+                           unknowns=[] if fmt_values else ["weight format (no file declared one)"],
+                           limitations=["format is read from the file header, never by loading the weights"]))
+
+    # architecture: the declared class name (config.json) and/or the family a GGUF header declares.
+    arch_refs = by_field.get("architecture", [])
+    arch_values = sorted({str(r.value) for r in arch_refs if r.value})
+    claims.append(validate("architecture", arch_values or None,
+                           [EvidenceRef(r.id, r.field, r.source_kind, r.directness, r.value, r.detail, r.location,
+                                        agrees=(str(r.value) in arch_values) if arch_values else None) for r in arch_refs],
+                           unknowns=[] if arch_values else ["declared architecture"],
+                           limitations=["an architecture name is a declaration, not a verified running model"]))
+
+    # REA-sourced evidence and investigation: a claim that the REA stage produced traceable findings. When REA did not run or
+    # nothing succeeded, there are no refs and the claim is UNKNOWN - it is never silently "verified" by an absent inspection.
+    for field_name in ("rea_evidence", "rea_investigation"):
+        r_refs = by_field.get(field_name, [])
+        r_values = sorted({str(r.value) for r in r_refs if r.value})
+        claims.append(validate(field_name, r_values or None,
+                               [EvidenceRef(r.id, r.field, r.source_kind, r.directness, r.value, r.detail, r.location,
+                                            agrees=(str(r.value) in r_values)) for r in r_refs],
+                               unknowns=[] if r_values else [f"{field_name} (REA produced no usable observation)"],
+                               limitations=["REA reads weight-file headers and retained metadata; it never executes the model"]))
 
     # provider / revision
     prov_refs: List[EvidenceRef] = []

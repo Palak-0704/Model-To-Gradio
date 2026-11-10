@@ -5,7 +5,11 @@ the real REA 6.8.0 ones for the tools the platform may call, plus decoys the cli
 appended to the JSON-lines file named by FAKE_REA_LOG, so a test can prove which tools were REALLY executed and with what arguments.
 
 FAKE_REA_MODE: ok | tool_error | crash | hang | no_model_tool | view | view_error | no_view_tool | gguf_bad
-                | capabilities | dynamic | reveal | answer | entropy_error | churn | long_chain
+                | capabilities | dynamic | reveal | answer | entropy_error | churn | long_chain | prompts | source
+  prompts    the server advertises one MCP prompt template; prompts/list returns it (the client records it, read-only)
+  source     the server advertises a capability-tagged source-text tool (read_source_file). It stages nothing itself: the client
+             hands it the ALREADY-COLLECTED source text read-only, and every read is logged (source_read) so a test can prove the
+             path stayed inside the scratch dir and that the source questions the Analyzer raised were answered
   view       the model-inspection result advertises a retained parent_evidence_id, so the client pages it with inspect_analysis_view
   view_error the parent id is advertised but the view call fails (it must stay optional and never change the verdict)
   no_view_tool  the server does not advertise inspect_analysis_view at all
@@ -77,6 +81,15 @@ CAPABILITY_TOOLS = [
 ]
 if MODE == "capabilities":
     TOOLS = TOOLS + CAPABILITY_TOOLS
+if MODE == "source":
+    # Advertise a read-only tool that returns local source text, so the Analyzer-informed source investigation can be exercised:
+    # the client must stage the already-collected source, select this tool by capability, and call it with the staged path.
+    TOOLS = TOOLS + CAPABILITY_TOOLS + [
+        {"name": "read_source_file", "description": "Read a local source file's text offline.",
+         "annotations": {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": False},
+         "inputSchema": {"type": "object", "properties": {"path": {"type": "string"}, "detail": {"type": "string"}},
+                         "required": ["path"], "additionalProperties": False}},
+    ]
 if MODE in ("dynamic", "reveal", "answer", "entropy_error", "churn", "long_chain"):
     # like "capabilities", but the entropy capability may be advertised under a different name
     tools = [t for t in CAPABILITY_TOOLS if t["name"] != "inspect_byte_entropy"]
@@ -187,6 +200,13 @@ def call(name, args):
         if MODE == "churn":  # a brand-new id on every call: the paging question must never dry up, yet the loop must still stop
             out["retained_evidence_id"] = "ev_" + ("%064x" % (os.getpid() * 1_000_000 + time.time_ns() % 1_000_000))
         return {"content": [{"type": "text", "text": json.dumps(out)}]}
+    if name == "read_source_file":
+        path = args["path"]
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            text = fh.read()
+        record({"source_read": path, "bytes": len(text)})
+        return {"content": [{"type": "text", "text": json.dumps({"path": os.path.basename(path), "text": text[:4000],
+                                                                 "line_count": text.count(chr(10)) + 1})}]}
     if name == "list_unknowns":
         return {"content": [{"type": "text", "text": json.dumps({"total": 1, "next_offset": None,
                                                                   "unknowns": [{"unknown_id": "unk_" + "cd" * 32,
@@ -223,8 +243,18 @@ def main():
         msg = json.loads(line)
         method, mid = msg.get("method"), msg.get("id")
         if method == "initialize":
-            send({"jsonrpc": "2.0", "id": mid, "result": {"protocolVersion": "2025-06-18", "capabilities": {"tools": {}},
+            caps = {"tools": {}}
+            if MODE in ("prompts", "capabilities", "dynamic", "reveal", "answer"):
+                caps["prompts"] = {"listChanged": True}
+            send({"jsonrpc": "2.0", "id": mid, "result": {"protocolVersion": "2025-06-18", "capabilities": caps,
                                                           "serverInfo": {"name": "rea", "version": "6.8.0"}}})
+        elif method == "prompts/list":
+            if MODE in ("prompts", "capabilities", "dynamic", "reveal", "answer"):
+                send({"jsonrpc": "2.0", "id": mid, "result": {"prompts": [
+                    {"name": "model-artifact-review", "description": "Review an inspected model artifact.",
+                     "arguments": [{"name": "evidence_id", "required": True}]}]}})
+            else:  # a server that does not implement prompts: the optional method must be answered with an error
+                send({"jsonrpc": "2.0", "id": mid, "error": {"code": -32601, "message": "unknown method"}})
         elif method == "tools/list":
             cursor = (msg.get("params") or {}).get("cursor")
             page = TOOLS[:2] if not cursor else TOOLS[2:]

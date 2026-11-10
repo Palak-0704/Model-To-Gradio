@@ -61,6 +61,8 @@ def collect_rea(report: Optional[Any], clock: Clock, secrets: Sequence[str] = ()
             "capabilities_by_tag": dict(getattr(report, "capabilities_by_tag", {}) or {}),
             "refused_tools": dict(getattr(report, "refusals", {}) or {}),
             "questions": list(getattr(report, "questions", []) or []),
+            "source_questions": list(getattr(report, "source_questions", []) or []),
+            "prompts": list(getattr(report, "prompts", []) or []),
             "investigation": list(getattr(report, "investigation", []) or []),
             "stop_reason": str(getattr(report, "stop_reason", "") or ""),
             "budget": dict(getattr(report, "budget", {}) or {}),

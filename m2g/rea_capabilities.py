@@ -140,6 +140,12 @@ CAPABILITIES: Tuple[CapabilitySpec, ...] = (
     CapabilitySpec("artifact_inventory", ("artifact", "model_artifact"), ("artifact_inventory",)),
     CapabilitySpec("binary_overview", ("overview", "binary_summary"), ("binary_overview",)),
     CapabilitySpec("settings_view", ("analysis_settings", "runtime_settings"), ("analysis_settings",)),
+    # A tool that returns the TEXT of a local source file. REA 6.8.0 advertises no such tool, so this capability is normally
+    # absent and its questions stay recorded gaps; the tag exists so that if a future server DOES advertise one it is used, and
+    # so the investigation can say honestly which source questions no advertised tool could answer. The keywords are deliberately
+    # specific (a plain word like "source" appears in many unrelated descriptions and must not select a wrong tool).
+    CapabilitySpec("source_text", ("read_source", "source_file", "read_text", "text_file", "read_plain_text", "source_code"),
+                   ("source_text",)),
 )
 
 TAG_ORDER: Tuple[str, ...] = tuple(c.tag for c in CAPABILITIES)
@@ -225,7 +231,9 @@ class EvidenceState:
     """The facts the Analyzer has already established for one target, as the question generators read them.
 
     This is deliberately a plain data structure: the generators do not know about RepoInfo or ReaReport, so the same logic works
-    for a Hugging Face model and for a GitHub repository."""
+    for a Hugging Face model and for a GitHub repository. The ``*_gaps`` fields are the questions the ANALYZER left open (its
+    uncertainties and the source-analysis coverage gaps); REA investigates those too, so its investigation is informed by the
+    platform's own analysis rather than by the weight artifacts alone."""
 
     files: Sequence[Tuple[str, str]] = ()  # (file name, local scratch path) for each header-inspected file
     header_bytes: Mapping[str, int] = field(default_factory=dict)  # file name -> header byte count (bounds the entropy window)
@@ -239,6 +247,11 @@ class EvidenceState:
     have: Set[str] = field(default_factory=set)  # evidence keys already established
     capabilities: Mapping[str, Sequence[str]] = field(default_factory=dict)  # tag -> eligible tool names
     tools: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)  # complete advertised catalog for dynamic matching
+    # --- Analyzer-informed investigation (populated from RepoInfo.source_analysis; empty for a metadata-only run) ---
+    source_files: Sequence[Tuple[str, str]] = ()  # (repository path, local scratch path) of safely collected source/config files
+    architecture_known: bool = False  # the Analyzer already established the architecture from config/metadata
+    loading_known: bool = False  # a model-loading call was found statically
+    io_known: bool = False  # the static I/O contract established at least one input and one output
 
 
 def _first_tool(state: EvidenceState, tag: str) -> Optional[str]:
@@ -249,12 +262,54 @@ def _first_tool(state: EvidenceState, tag: str) -> Optional[str]:
 def _can_answer(state: EvidenceState, question: Question) -> bool:
     if _first_tool(state, question.kind) is not None:
         return True
+    # A source-text question may only be answered by a tool positively tagged as a source reader. Fuzzy name/description
+    # matching must never route it to a binary/archive inspector, which cannot read text and would only produce a spurious call.
+    if question.kind == "source_text":
+        return False
     policy = CapabilityPolicy()
     wanted = _question_terms(question)
     for tool in state.tools.values():
         if isinstance(tool, Mapping) and policy.eligible(tool) and wanted & _tool_terms(tool):
             return True
     return False
+
+
+def _source_questions(state: EvidenceState) -> List[Question]:
+    """The source-investigation questions the Analyzer's OWN gaps raise, regardless of whether a tool can answer them.
+
+    Each targets a source/config file the platform really staged, so a question can never point at a target that does not exist.
+    The caller decides whether an advertised capability can answer them (planned) or they stay recorded gaps."""
+    qs: List[Question] = []
+    staged = {name for name, _ in state.source_files}
+    if not state.architecture_known:
+        for name, path in state.source_files:
+            if name.lower().endswith(("config.json", ".py")) and name in staged:
+                qs.append(Question(f"source_text:{name}", "source_text", name,
+                                   f"the architecture is unconfirmed; inspect {name} for the model class/config it declares",
+                                   {"path": path, "detail": "complete"}))
+    if not state.loading_known:
+        for name, path in state.source_files:
+            if name.lower().endswith(".py") and name in staged:
+                qs.append(Question(f"source_text:{name}:load", "source_text", name,
+                                   f"no model-loading call was found; inspect {name} for how the model is loaded",
+                                   {"path": path, "detail": "complete"}))
+    if not state.io_known:
+        for name, path in state.source_files:
+            if name.lower().endswith(".py") and name in staged:
+                qs.append(Question(f"source_text:{name}:io", "source_text", name,
+                                   f"the input/output contract is incomplete; inspect {name} for the inference signature",
+                                   {"path": path, "detail": "complete"}))
+    return qs
+
+
+def unanswered_source_questions(state: EvidenceState) -> List[Question]:
+    """Source questions raised by the Analyzer's gaps that no advertised capability can answer: the recorded gaps.
+
+    REA 6.8.0 advertises no tool that returns local text, so on the real server this is where the source questions land - kept,
+    with their target and reason, so the report can say honestly what the investigation could not establish and why."""
+    if state.capabilities.get("source_text"):
+        return []
+    return _source_questions(state)
 
 
 def generate_questions(state: EvidenceState) -> List[Question]:
@@ -310,6 +365,13 @@ def generate_questions(state: EvidenceState) -> List[Question]:
     # An overview question when the header inspection produced nothing usable but an inspection tool exists.
     if not state.header_ok and "binary_overview" not in state.have:
         add("binary_overview", "session", "the header inspection produced no usable facts", {})
+
+    # --- Source-code investigation, informed by the Analyzer's own gaps ------------------------------------------------------
+    # These questions target the source files the platform already collected safely, and are added only when an advertised
+    # capability can answer them (REA 6.8.0 advertises no source reader, so they remain recorded gaps via
+    # ``unanswered_source_questions``). ``add`` already drops any question no eligible tool can answer.
+    for q in _source_questions(state):
+        add(q.kind, q.target, q.text, q.arguments)
 
     order = {tag: i for i, tag in enumerate(TAG_ORDER)}
     qs.sort(key=lambda q: (order.get(q.kind, len(TAG_ORDER)), q.target))
