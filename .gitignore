@@ -1,0 +1,37 @@
+﻿# Python environments
+.venv/
+venv/
+env/
+.onnx-runtime/
+
+# Python cache and test artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Local state and synchronization
+.m2g/
+.colabsync/
+.vscode/
+.write_probe_*
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+node_modules/
+
+# Logs and temporary files
+*.log
+*.tmp
+
+# Generated model outputs
+output/

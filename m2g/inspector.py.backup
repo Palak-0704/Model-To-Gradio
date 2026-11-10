@@ -1,0 +1,843 @@
+﻿"""Read-only repository inspection for Hugging Face models and GitHub repositories.
+
+Only metadata and a fixed allow-list of small text files are fetched. Model weights are never downloaded,
+and nothing fetched is ever imported, executed or evaluated.
+"""
+from __future__ import annotations
+
+import ast
+import configparser
+import json
+import re
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional, Tuple
+
+from .config import Settings
+from .security import (
+    FetchError,
+    HTTPStatusError,
+    NetworkError,
+    SafeFetcher,
+    SecurityError,
+    SourceRef,
+    parse_source_url,
+    redact_secrets,
+    validate_repo_id,
+    validate_revision,
+)
+
+try:  # Python 3.11+
+    import tomllib  # type: ignore
+except ImportError:  # pragma: no cover
+    tomllib = None  # type: ignore
+
+
+class InspectionError(RuntimeError):
+    """User-facing inspection failure (message is safe to display).
+
+    ``code`` is an optional stable identifier of the failure (for example ``repository_not_found``) for callers that must react to
+    the kind of failure rather than parse its message; it is None for errors that have not been given one."""
+
+    def __init__(self, message: str = "", code: Optional[str] = None) -> None:
+        super().__init__(message)
+        self.code = code
+
+
+WEIGHT_EXTS = (".safetensors", ".bin", ".pt", ".pth", ".ckpt", ".gguf", ".onnx", ".h5", ".msgpack", ".tflite",
+               ".pkl", ".pickle", ".npz", ".pb", ".ot", ".keras", ".mlmodel")
+PICKLE_EXTS = (".bin", ".pt", ".pth", ".ckpt", ".pkl", ".pickle")
+SAFETENSORS_INDEX_SUFFIX = ".safetensors.index.json"
+PICKLE_INDEX_SUFFIXES = (".bin.index.json", ".pt.index.json", ".pth.index.json", ".ckpt.index.json")
+# The ONLY files ever fetched from a Hugging Face repo. Weight files can never be requested.
+HF_FETCH_ALLOWLIST = ("config.json", "model_index.json", "tokenizer_config.json", "adapter_config.json",
+                      "preprocessor_config.json", "generation_config.json", "README.md")
+GH_FETCH_CANDIDATES = ("requirements.txt", "pyproject.toml", "environment.yml", "setup.py", "setup.cfg")
+_MAX_SMALL_FILE = 1_500_000
+# Python source files that may be fetched from a GitHub repo purely as TEXT for static (ast) scanning. They are never
+# imported, executed or evaluated; the caps keep the scan small and bounded.
+MAX_SOURCE_FILES = 6
+_MAX_SOURCE_FILE = 200_000
+_MAX_SCAN_ITEMS = 80
+
+
+@dataclass
+class RepoInfo:
+    source: SourceRef
+    revision_sha: Optional[str] = None
+    pipeline_tag: Optional[str] = None
+    library_name: Optional[str] = None
+    tags: List[str] = field(default_factory=list)
+    license: Optional[str] = None
+    gated: bool = False
+    private: bool = False
+    downloads: Optional[int] = None
+    likes: Optional[int] = None
+    files: List[Tuple[str, Optional[int]]] = field(default_factory=list)
+    config: Optional[Dict[str, Any]] = None
+    tokenizer_config: Optional[Dict[str, Any]] = None
+    model_index: Optional[Dict[str, Any]] = None
+    adapter_config: Optional[Dict[str, Any]] = None
+    safetensors_total_params: Optional[int] = None
+    safetensors_dtypes: Dict[str, int] = field(default_factory=dict)
+    readme: str = ""
+    # GitHub specific
+    default_branch: Optional[str] = None
+    description: Optional[str] = None
+    topics: List[str] = field(default_factory=list)
+    language: Optional[str] = None
+    requirements: List[Dict[str, str]] = field(default_factory=list)
+    requirement_flags: List[str] = field(default_factory=list)
+    linked_hf_models: List[str] = field(default_factory=list)
+    # link ranking: which README-linked Hugging Face model (if any) is the repository's OWN model
+    primary_hf_model: Optional[str] = None
+    hf_link_roles: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    # metadata of the primary linked model, read through the same allow-listed Hub inspector (never weights)
+    primary_model_info: Optional["RepoInfo"] = None
+    # static (ast-only) facts about a few small source files; nothing here was executed
+    source_scan: List[Dict[str, Any]] = field(default_factory=list)
+    package_keywords: List[str] = field(default_factory=list)
+    # bookkeeping
+    warnings: List[str] = field(default_factory=list)
+    fetched: List[Tuple[str, int]] = field(default_factory=list)
+    # result of the REA inspection stage (m2g.rea_client.ReaReport); set by the pipeline between inspection and analysis
+    rea: Optional[Any] = None
+    # result of the evidence collection stage (m2g.evidence_bridge.EvidenceContext); set by the pipeline next to ``rea``. None: not collected.
+    evidence: Optional[Any] = None
+    # generation_config.json (parsed). It was already fetched but never kept; it declares task-conditioning tokens (task_to_id).
+    generation_config: Optional[Dict[str, Any]] = None
+    # Task identifiers the model card's own ``model-index`` declares for its evaluation results (from the Hub API's cardData, which was
+    # already returned; nothing extra is fetched). Raw, bounded identifier strings: the analyzer decides which ones it recognises.
+    card_tasks: List[str] = field(default_factory=list)
+    # preprocessor_config.json (parsed). It was already fetched (allow-listed) but discarded; it states the input a feature extractor /
+    # image processor expects (sampling_rate, size, ...). Data only; nothing in it is executed.
+    preprocessor_config: Optional[Dict[str, Any]] = None
+    # ---- GitHub provenance (filled by _inspect_github; every field stays at its default for a Hugging Face repository)
+    # The commit every GitHub file was read at; None when the revision could not be resolved to one (then files were read by branch name).
+    commit_sha: Optional[str] = None
+    requested_revision: Optional[str] = None  # the branch/tag/commit named in the URL (None: the default branch was used)
+    revision_kind: Optional[str] = None  # commit | requested-ref | default-branch | head
+    homepage: str = ""  # the repository's own 'homepage' field (a maintainer declaration, kept as plain text)
+    canonical_repo_id: Optional[str] = None  # set when GitHub reports another owner/name than the URL used (renamed / transferred)
+    repo_flags: Dict[str, Any] = field(default_factory=dict)  # archived / fork / fork_of / empty
+    # which README/code location(s) each linked Hugging Face model id was found in: {"owner/name": ["README.md", "pkg/model.py"]}
+    hf_link_sources: Dict[str, List[str]] = field(default_factory=dict)
+    # Things that could not be read, as structured facts ({"code", "message"}). A gap means the content is UNKNOWN, never absent.
+    inspection_gaps: List[Dict[str, str]] = field(default_factory=list)
+
+    # ---- file helpers
+    def file_names(self) -> List[str]:
+        return [n for n, _ in self.files]
+
+    def _exts(self, exts) -> List[Tuple[str, Optional[int]]]:
+        return [(n, s) for n, s in self.files if n.lower().endswith(exts)]
+
+    @property
+    def has_safetensors(self) -> bool:
+        return bool(self.safetensors_files or self.safetensors_indexes)
+
+    @property
+    def safetensors_files(self) -> List[Tuple[str, Optional[int]]]:
+        return self._exts((".safetensors",))
+
+    @property
+    def safetensors_indexes(self) -> List[Tuple[str, Optional[int]]]:
+        return [(n, s) for n, s in self.files if n.lower().endswith(SAFETENSORS_INDEX_SUFFIX)]
+
+    @property
+    def safetensors_shards(self) -> List[Tuple[str, Optional[int]]]:
+        return [(n, s) for n, s in self.safetensors_files if re.search(r"-\d{5}-of-\d{5}\.safetensors$", n.lower())]
+
+    @property
+    def has_verified_safetensors(self) -> bool:
+        """Whether this repository advertises a complete safe weight set."""
+        return bool(self.safetensors_files) or bool(self.safetensors_indexes and self.safetensors_shards)
+
+    @property
+    def pickle_indexes(self) -> List[Tuple[str, Optional[int]]]:
+        return [(n, s) for n, s in self.files if n.lower().endswith(PICKLE_INDEX_SUFFIXES)]
+
+    def weight_inventory(self) -> Dict[str, Any]:
+        """Return bounded, read-only format evidence from the Hub file listing."""
+        safe = self.safetensors_files + self.safetensors_indexes
+        pickle = self._exts(PICKLE_EXTS) + self.pickle_indexes
+        return {
+            "safetensors": [n for n, _ in safe][:80],
+            "safetensors_shards": [n for n, _ in self.safetensors_shards][:80],
+            "safetensors_indexed": bool(self.safetensors_indexes),
+            "pickle": [n for n, _ in pickle][:80],
+            "pickle_indexed": bool(self.pickle_indexes),
+            "safe_format_available": self.has_verified_safetensors,
+            "safe_format_same_repository": self.has_verified_safetensors,
+        }
+
+    @property
+    def has_pickle_weights(self) -> bool:
+        return bool(self._exts(PICKLE_EXTS))
+
+    @property
+    def has_gguf(self) -> bool:
+        return bool(self._exts((".gguf",)))
+
+    @property
+    def has_onnx(self) -> bool:
+        return bool(self._exts((".onnx",)))
+
+    def weights_bytes(self) -> Optional[int]:
+        """Total size of the preferred weight format present (safetensors > pickle > gguf > onnx)."""
+        for exts in ((".safetensors",), PICKLE_EXTS, (".gguf",), (".onnx",)):
+            sel = self._exts(exts)
+            sizes = [s for _, s in sel if s]
+            if sizes:
+                return int(sum(sizes))
+        return None
+
+
+# --------------------------------------------------------------------------- helpers
+
+
+def _net_msg(exc: Exception) -> str:
+    return ("Network problem while inspecting the repository: " + redact_secrets(str(exc)) +
+            " (DNS/proxy/firewall?). The request was not retried repeatedly; fix connectivity and run again.")
+
+
+def _card_task_types(card: Any) -> List[str]:
+    """Task identifiers declared in the model card's ``model-index`` evaluation results (``results[].task.type``). Pure data read of the
+    card YAML the Hub API already returned. Only identifier-shaped strings are kept (deduplicated, bounded); whether one is a
+    recognised task is the analyzer's decision, and a card that declares none yields an empty list."""
+    index = card.get("model-index") if isinstance(card, dict) else None
+    found: List[str] = []
+    for entry in (index if isinstance(index, list) else [])[:20]:
+        results = entry.get("results") if isinstance(entry, dict) else None
+        for res in (results if isinstance(results, list) else [])[:40]:
+            task = res.get("task") if isinstance(res, dict) else None
+            t = task.get("type") if isinstance(task, dict) else None
+            if isinstance(t, str) and re.fullmatch(r"[a-z0-9][a-z0-9_.:+-]{0,63}", t) and t not in found:
+                found.append(t)
+    return found[:16]
+
+
+def _try_json(text: str) -> Optional[Dict[str, Any]]:
+    try:
+        v = json.loads(text)
+        return v if isinstance(v, dict) else None
+    except json.JSONDecodeError:
+        return None
+
+
+def parse_requirements(text: str) -> Tuple[List[Dict[str, str]], List[str]]:
+    """Pure-text parse of a requirements.txt. Returns ([{'name','spec'}], flags)."""
+    reqs: List[Dict[str, str]] = []
+    flags: List[str] = []
+    for raw in text.splitlines():
+        line = re.sub(r"(^|\s)#.*$", "", raw).strip()
+        if not line:
+            continue
+        low = line.lower()
+        if low.startswith(("-r", "-c", "--requirement", "--constraint")):
+            flags.append("requirements file includes other files (not followed)")
+        elif low.startswith(("-e", "--editable")):
+            flags.append("editable/VCS install present")
+        elif low.startswith(("--index-url", "--extra-index-url", "-i ", "--find-links", "-f ", "--trusted-host")):
+            flags.append("custom package index / find-links present")
+        elif low.startswith("-"):
+            flags.append(f"pip option present: {line.split()[0]}")
+        elif "://" in line or low.startswith("git+") or " @ " in line:
+            flags.append("direct URL/VCS dependency (can run arbitrary code at install time)")
+        else:
+            spec = line.split(";")[0].strip()
+            m = re.match(r"^([A-Za-z0-9][A-Za-z0-9._-]*)", spec)
+            if m:
+                reqs.append({"name": m.group(1).lower().replace("_", "-"), "spec": spec})
+    return reqs, sorted(set(flags))
+
+
+def _parse_pyproject(text: str) -> List[Dict[str, str]]:
+    deps: List[str] = []
+    if tomllib is not None:
+        try:
+            data = tomllib.loads(text)
+            deps = list(data.get("project", {}).get("dependencies", []) or [])
+            poetry = data.get("tool", {}).get("poetry", {}).get("dependencies", {}) or {}
+            deps += [k for k in poetry if k.lower() != "python"]
+        except Exception:  # malformed toml: ignore
+            return []
+    out = []
+    for d in deps:
+        m = re.match(r"^([A-Za-z0-9][A-Za-z0-9._-]*)", str(d))
+        if m:
+            out.append({"name": m.group(1).lower().replace("_", "-"), "spec": str(d).split(";")[0].strip()})
+    return out
+
+
+# First path segments of huggingface.co links that are site pages, not model owners (e.g. huggingface.co/tasks/text-classification).
+_HF_SITE_PAGES = frozenset({"datasets", "spaces", "docs", "blog", "papers", "models", "collections", "organizations", "api", "settings",
+                            "join", "login", "new", "pricing", "tasks", "chat", "learn", "posts", "search", "welcome", "enterprise",
+                            "support", "terms-of-service", "privacy", "sponsors"})
+
+
+def _find_hf_links(text: str) -> List[str]:
+    found: List[str] = []
+    patterns = [r"huggingface\.co/([A-Za-z0-9][A-Za-z0-9._-]{0,95}/[A-Za-z0-9][A-Za-z0-9._-]{0,95})",
+                r"from_pretrained\(\s*[\"']([A-Za-z0-9][A-Za-z0-9._-]{0,95}/[A-Za-z0-9][A-Za-z0-9._-]{0,95})[\"']"]
+    skip = _HF_SITE_PAGES
+    for pat in patterns:
+        for m in re.finditer(pat, text):
+            rid = m.group(1).rstrip(".")
+            if rid.split("/")[0].lower() in skip:
+                continue
+            try:
+                validate_repo_id(rid)
+            except SecurityError:
+                continue
+            if rid not in found:
+                found.append(rid)
+    return found[:10]
+
+
+# --------------------------------------------------------------------------- static packaging / source helpers
+# Everything below works on TEXT only. `ast.parse` builds a syntax tree without running any code; `ast.literal_eval` only
+# accepts literals. No setup.py, notebook or module is ever imported or executed.
+
+
+def _call_name(node: ast.Call) -> str:
+    f = node.func
+    if isinstance(f, ast.Name):
+        return f.id
+    if isinstance(f, ast.Attribute):
+        return f.attr
+    return ""
+
+
+def parse_setup_py(text: str) -> Tuple[List[Dict[str, str]], List[str], Optional[str]]:
+    """Statically read literal ``install_requires``/``keywords`` from a setup() call. Returns (reqs, keywords, problem)."""
+    try:
+        tree = ast.parse(text)
+    except (SyntaxError, ValueError, RecursionError, MemoryError):
+        return [], [], "setup.py could not be parsed"
+    reqs: List[Dict[str, str]] = []
+    keywords: List[str] = []
+    problem: Optional[str] = None
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call) and _call_name(node) == "setup"):
+            continue
+        for kw in node.keywords:
+            if kw.arg not in ("install_requires", "keywords"):
+                continue
+            try:
+                val = ast.literal_eval(kw.value)
+            except (ValueError, SyntaxError, TypeError, RecursionError, MemoryError):
+                if kw.arg == "install_requires":
+                    problem = "install_requires is computed, not a literal list"
+                continue
+            if isinstance(val, str):
+                val = [v for v in re.split(r"[\n,]", val) if v.strip()] if kw.arg == "keywords" else val.splitlines()
+            if not isinstance(val, (list, tuple)) or not all(isinstance(v, str) for v in val):
+                continue
+            if kw.arg == "install_requires":
+                parsed, _flags = parse_requirements("\n".join(val))
+                reqs += parsed
+            else:
+                keywords += [v.strip() for v in val if v.strip()][:20]
+    return reqs, keywords, problem
+
+
+def parse_setup_cfg(text: str) -> Tuple[List[Dict[str, str]], List[str]]:
+    cp = configparser.ConfigParser(interpolation=None)
+    try:
+        cp.read_string(text)
+        raw = cp.get("options", "install_requires", fallback="")
+        kws = cp.get("metadata", "keywords", fallback="")
+    except (configparser.Error, ValueError):
+        return [], []
+    reqs, _ = parse_requirements(raw)
+    return reqs, [k.strip() for k in re.split(r"[\n,]", kws) if k.strip()][:20]
+
+
+_SKIP_DIR_RE = re.compile(r"(^|/)(tests?|docs?|\.github|node_modules|venv|\.venv|build|dist|third_party|vendor|site-packages|"
+                          r"__pycache__)(/|$)", re.I)
+_SOURCE_HINT_RE = re.compile(r"(model|modeling|processor|pipeline|inference|infer|predict|generat|caption|demo|app|main|"
+                             r"config|train|__init__)", re.I)
+
+
+def pick_source_files(paths: List[Tuple[str, Optional[int]]], limit: int = MAX_SOURCE_FILES) -> List[str]:
+    """Choose a few small .py files (package modules, examples, entry points) worth a static scan."""
+    scored: List[Tuple[int, str]] = []
+    for path, size in paths:
+        low = path.lower()
+        if not low.endswith(".py") or _SKIP_DIR_RE.search(path) or low in ("setup.py", "conftest.py"):
+            continue
+        if size is not None and size > _MAX_SOURCE_FILE:
+            continue
+        parts = path.split("/")
+        score = 0
+        if _SOURCE_HINT_RE.search(parts[-1]):
+            score += 2
+        if len(parts) >= 2 and parts[0] not in ("examples", "example", "scripts"):
+            score += 2  # inside a package directory
+        if parts[0] in ("examples", "example", "demo"):
+            score += 2
+        if len(parts) <= 2:
+            score += 1
+        scored.append((-score, path))
+    return [p for _, p in sorted(scored)[:limit]]
+
+
+def _dotted(node: ast.AST) -> str:
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        base = _dotted(node.value)
+        return f"{base}.{node.attr}" if base else node.attr
+    return ""
+
+
+def scan_python_source(path: str, text: str) -> Optional[Dict[str, Any]]:
+    """ast-only summary of one module: classes (+bases), defs, imports and literal from_pretrained() arguments."""
+    try:
+        tree = ast.parse(text)
+    except (SyntaxError, ValueError, RecursionError, MemoryError):
+        return None
+    classes: Dict[str, List[str]] = {}
+    defs: List[str] = []
+    imports: List[str] = []
+    imported_names: List[str] = []
+    pretrained_ids: List[str] = []
+    pretrained_classes: List[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef) and len(classes) < _MAX_SCAN_ITEMS:
+            classes[node.name] = [b for b in (_dotted(x) for x in node.bases) if b]
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and len(defs) < _MAX_SCAN_ITEMS:
+            defs.append(node.name)
+        elif isinstance(node, ast.Import):
+            imports += [a.name.split(".")[0] for a in node.names]
+        elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
+            top = node.module.split(".")[0]
+            imports.append(top)
+            imported_names += [f"{top}:{a.name}" for a in node.names if len(imported_names) < _MAX_SCAN_ITEMS]
+        elif isinstance(node, ast.Call) and _call_name(node) == "from_pretrained":
+            owner = _dotted(node.func.value) if isinstance(node.func, ast.Attribute) else ""
+            if owner and owner not in pretrained_classes and len(pretrained_classes) < _MAX_SCAN_ITEMS:
+                pretrained_classes.append(owner.split(".")[-1])
+            if node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
+                v = node.args[0].value
+                if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,95}/[A-Za-z0-9][A-Za-z0-9._-]{0,95}", v) and v not in pretrained_ids:
+                    pretrained_ids.append(v)
+    return {"path": path, "classes": classes, "defs": defs, "imports": sorted(set(imports)),
+            "imported_names": imported_names[:_MAX_SCAN_ITEMS], "pretrained_ids": pretrained_ids[:10],
+            "pretrained_classes": pretrained_classes}
+
+
+# README context cues. A link is the repository's OWN model when it carries the repo's name/owner or sits next to wording like
+# "pretrained model is available at"; it is a dependency when it sits under "based on/utilizes/acknowledgements" wording.
+_PRIMARY_CUES = ("pretrained model", "pre-trained model", "our model", "available at", "model weights", "weights", "checkpoint",
+                 "released model", "model card", "hosted at", "download")
+_DEPENDENCY_CUES = ("acknowledg", "based on", "utiliz", "backbone", "tested with", "vision encoder", "language model",
+                    "possible values", "credits", "thanks", "inspired", "built on", "builds on", "lm:")
+
+
+def _norm_name(v: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", v.lower())
+
+
+def rank_hf_links(readme: str, ref: SourceRef, links: List[str],
+                  extra_evidence: Optional[Dict[str, Dict[str, Any]]] = None) -> Tuple[Optional[str], Dict[str, Dict[str, Any]]]:
+    """Decide which README-linked Hugging Face model (if any) is the repository's primary model. Returns (id, roles).
+
+    ``extra_evidence`` maps a model id to ``{"score": int, "reason": str}`` for evidence that is not in the README text (for example the
+    repository's own homepage field); it is added to that link's score and recorded in its reasons."""
+    roles: Dict[str, Dict[str, Any]] = {}
+    low = readme.lower()
+    for rid in links:
+        score, reasons = 0, []
+        owner, _, name = rid.partition("/")
+        if _norm_name(name) == _norm_name(ref.name):
+            score += 3
+            reasons.append("model name equals the repository name")
+        if ref.owner and owner.lower() == ref.owner.lower():
+            score += 2
+            reasons.append("same owner as the repository")
+        extra = (extra_evidence or {}).get(rid)
+        if extra:
+            score += int(extra.get("score", 0))
+            reasons.append(str(extra.get("reason", "declared by the repository")))
+        windows = [low[max(0, m.start() - 160):m.start()] for m in re.finditer(re.escape(rid.lower()), low)]
+        if any(c in w for w in windows for c in _PRIMARY_CUES):
+            score += 2
+            reasons.append("README describes it as the available/pretrained model")
+        dep = bool(windows) and all(any(c in w for c in _DEPENDENCY_CUES) for w in windows)
+        if dep:
+            score -= 2
+            reasons.append("README mentions it as a backbone/dependency")
+        role = "dependency" if dep and score < 3 else ("candidate" if score >= 3 else "referenced")
+        roles[rid] = {"role": role, "score": score, "reasons": reasons}
+    ranked = sorted(roles.items(), key=lambda kv: -kv[1]["score"])
+    primary = None
+    if ranked and ranked[0][1]["score"] >= 3 and (len(ranked) == 1 or ranked[0][1]["score"] - ranked[1][1]["score"] >= 2):
+        primary = ranked[0][0]
+        roles[primary]["role"] = "primary"
+    return primary, roles
+
+
+# --------------------------------------------------------------------------- Hugging Face
+
+
+def _inspect_hf(ref: SourceRef, fetcher: SafeFetcher, settings: Settings) -> RepoInfo:
+    info = RepoInfo(source=ref)
+    base = f"https://huggingface.co/api/models/{ref.repo_id}"
+    url = (f"{base}/revision/{ref.revision}" if ref.revision else base) + "?blobs=true"
+    try:
+        meta = fetcher.get_json(url, max_bytes=4_000_000)
+    except HTTPStatusError as exc:
+        if exc.status in (401, 403):
+            raise InspectionError("Hugging Face denied access (gated or private model). Set HF_TOKEN for an account that "
+                                  "accepted the model's terms.")
+        if exc.status == 404:
+            raise InspectionError("Model not found on Hugging Face (wrong name, or it is private).")
+        raise InspectionError(f"Hugging Face API returned HTTP {exc.status}.")
+    except NetworkError as exc:
+        raise InspectionError(_net_msg(exc))
+    except FetchError as exc:
+        raise InspectionError(redact_secrets(str(exc)))
+    if not isinstance(meta, dict):
+        raise InspectionError("Unexpected response from Hugging Face API.")
+
+    info.revision_sha = meta.get("sha") if re.fullmatch(r"[0-9a-f]{7,64}", str(meta.get("sha", ""))) else None
+    info.pipeline_tag = meta.get("pipeline_tag")
+    info.library_name = meta.get("library_name")
+    info.tags = [str(t) for t in (meta.get("tags") or [])][:200]
+    card = meta.get("cardData") if isinstance(meta.get("cardData"), dict) else {}
+    info.card_tasks = _card_task_types(card)
+    lic = card.get("license") or next((t.split(":", 1)[1] for t in info.tags if t.startswith("license:")), None)
+    info.license = str(lic) if lic else None
+    info.gated = bool(meta.get("gated"))
+    info.private = bool(meta.get("private"))
+    info.downloads, info.likes = meta.get("downloads"), meta.get("likes")
+    for s in meta.get("siblings") or []:
+        if isinstance(s, dict) and isinstance(s.get("rfilename"), str):
+            info.files.append((s["rfilename"], s.get("size") if isinstance(s.get("size"), int) else None))
+    st = meta.get("safetensors")
+    if isinstance(st, dict):
+        if isinstance(st.get("total"), int):
+            info.safetensors_total_params = st["total"]
+        if isinstance(st.get("parameters"), dict):
+            info.safetensors_dtypes = {str(k): int(v) for k, v in st["parameters"].items() if isinstance(v, int)}
+    inline_cfg = meta.get("config") if isinstance(meta.get("config"), dict) else None
+
+    pin = info.revision_sha or ref.revision or "main"
+    try:
+        validate_revision(pin)
+    except SecurityError:
+        pin = "main"
+    sizes = dict(info.files)
+    for fname in HF_FETCH_ALLOWLIST:
+        if fname not in sizes:
+            continue
+        if sizes[fname] and sizes[fname] > _MAX_SMALL_FILE:
+            info.warnings.append(f"{fname} skipped (larger than {_MAX_SMALL_FILE} bytes).")
+            continue
+        try:
+            res = fetcher.fetch(f"https://huggingface.co/{ref.repo_id}/resolve/{pin}/{fname}", max_bytes=_MAX_SMALL_FILE)
+        except HTTPStatusError as exc:
+            info.warnings.append(f"Could not fetch {fname} (HTTP {exc.status}).")
+            continue
+        except NetworkError as exc:
+            info.warnings.append(f"Network problem fetching {fname}; remaining files skipped: {redact_secrets(str(exc))[:100]}")
+            break
+        except FetchError as exc:
+            info.warnings.append(f"Could not fetch {fname}: {redact_secrets(str(exc))[:100]}")
+            continue
+        text = res.body.decode("utf-8", errors="replace")
+        info.fetched.append((fname, len(res.body)))
+        if fname == "README.md":
+            info.readme = text[: settings.max_readme_chars]
+        else:
+            parsed = _try_json(text)
+            if parsed is None:
+                info.warnings.append(f"{fname} is not valid JSON.")
+                continue
+            attr = {"config.json": "config", "model_index.json": "model_index", "tokenizer_config.json": "tokenizer_config",
+                    "adapter_config.json": "adapter_config", "generation_config.json": "generation_config",
+                    "preprocessor_config.json": "preprocessor_config"}.get(fname)
+            if attr:
+                setattr(info, attr, parsed)
+    if info.config is None and inline_cfg is not None:
+        info.config = inline_cfg
+        info.warnings.append("config.json not fetched; using the Hub API's config summary.")
+    if info.tokenizer_config is None and inline_cfg and isinstance(inline_cfg.get("tokenizer_config"), dict):
+        info.tokenizer_config = inline_cfg["tokenizer_config"]
+    return info
+
+
+# --------------------------------------------------------------------------- GitHub
+
+_SHA40_RE = re.compile(r"^[0-9a-f]{40}$")
+_REPO_PATH_SEG = re.compile(r"^[A-Za-z0-9_.-]{1,100}$")
+_GH_SHA_HEADERS = {"Accept": "application/vnd.github.sha", "X-GitHub-Api-Version": "2022-11-28"}
+# Codes of RepoInfo.inspection_gaps. A gap always means the content is UNKNOWN (it could not be read), never that it is absent.
+# LINK_BLINDING_GAPS could hide a link to a Hugging Face model; CODE_BLIND_GAPS could hide repository code that contradicts a linked model.
+LINK_BLINDING_GAPS = ("api_unavailable", "readme_unavailable", "network_interrupted")
+CODE_BLIND_GAPS = ("api_unavailable", "file_tree_unavailable", "source_scan_interrupted", "network_interrupted")
+
+
+def _gap(info: RepoInfo, code: str, message: str) -> None:
+    """Record one thing that could not be read (once per code) as a structured fact; the analysis reasons about what is therefore unknown."""
+    if not any(g["code"] == code for g in info.inspection_gaps):
+        info.inspection_gaps.append({"code": code, "message": redact_secrets(message)[:240]})
+
+
+def _printable(text: Any, limit: int = 80) -> str:
+    return re.sub(r"[^\x20-\x7e]", "?", str(text))[:limit]
+
+
+def _safe_repo_path(path: Any) -> bool:
+    """True for a repository path that can go into a raw.githubusercontent.com URL without changing its meaning: no query, fragment,
+    escape, space, empty or dot segment. Paths come from the repository's own file list, so they are untrusted text."""
+    if not isinstance(path, str) or not path or len(path) > 240:
+        return False
+    return all(_REPO_PATH_SEG.match(part) and part not in (".", "..") for part in path.split("/"))
+
+
+def _rate_limited(exc: HTTPStatusError) -> bool:
+    """Does this refusal look like GitHub's rate limit (rather than an access refusal)? Decided from the response headers only."""
+    headers = getattr(exc, "headers", None) or {}
+    return exc.status == 429 or headers.get("x-ratelimit-remaining") == "0" or "retry-after" in headers
+
+
+def _resolve_github_commit(api: str, branch: str, fetcher: SafeFetcher) -> Tuple[Optional[str], str]:
+    """(commit sha, "") for the branch / tag / commit named ``branch``, or (None, why it could not be resolved). Only the commit id is
+    read: GitHub's ``sha`` media type answers with the 40-character id alone, so no commit metadata or file list is transferred."""
+    if _SHA40_RE.fullmatch(branch):
+        return branch, ""
+    try:
+        res = fetcher.fetch(f"{api}/commits/{branch}", _GH_SHA_HEADERS, max_bytes=4096)
+    except HTTPStatusError as exc:
+        return None, f"HTTP {exc.status}"
+    except NetworkError as exc:
+        raise InspectionError(_net_msg(exc), code="network_error")
+    except FetchError as exc:
+        return None, redact_secrets(str(exc))[:80]
+    text = res.body.decode("ascii", errors="replace").strip()
+    return (text, "") if _SHA40_RE.fullmatch(text) else (None, "the answer was not a commit id")
+
+
+def _read_github_flags(info: RepoInfo, meta: Dict[str, Any], ref: SourceRef) -> None:
+    """Repository facts that decide how the rest of the inspection is read: disabled, fork, homepage, renamed. Raises for a disabled repository."""
+    if meta.get("disabled"):
+        raise InspectionError("This GitHub repository is disabled, so it cannot be inspected.", code="repository_disabled")
+    flags: Dict[str, Any] = {"archived": bool(meta.get("archived")), "fork": bool(meta.get("fork"))}
+    parent = meta.get("parent")
+    if flags["fork"] and isinstance(parent, dict) and isinstance(parent.get("full_name"), str):
+        flags["fork_of"] = _printable(parent["full_name"], 120)
+    info.repo_flags = flags
+    homepage = meta.get("homepage")
+    if isinstance(homepage, str):
+        info.homepage = homepage.strip()[:300]
+    full = meta.get("full_name")
+    if isinstance(full, str) and full.lower() != ref.repo_id.lower():
+        try:
+            validate_repo_id(full)
+        except SecurityError:
+            return
+        info.canonical_repo_id = full
+        info.warnings.append(f"GitHub reports this repository as '{full}' (it was renamed or transferred); the files analysed are from there.")
+
+
+def _inspect_github(ref: SourceRef, fetcher: SafeFetcher, settings: Settings) -> RepoInfo:
+    info = RepoInfo(source=ref)
+    api = f"https://api.github.com/repos/{ref.repo_id}"
+    gh_headers = {"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"}
+    api_ok = True
+    api_error: Optional[HTTPStatusError] = None
+    try:
+        meta = fetcher.get_json(api, gh_headers)
+        if not isinstance(meta, dict):
+            raise InspectionError("Unexpected response from the GitHub API.", code="unexpected_response")
+        default_branch = meta.get("default_branch")
+        info.default_branch = default_branch if isinstance(default_branch, str) else None
+        info.description = meta.get("description")
+        info.topics = [str(t) for t in (meta.get("topics") or [])][:30]
+        info.language = meta.get("language")
+        lic = meta.get("license")
+        info.license = lic.get("spdx_id") if isinstance(lic, dict) else None
+        info.private = bool(meta.get("private"))
+        _read_github_flags(info, meta, ref)
+        if meta.get("archived"):
+            info.warnings.append("Repository is archived.")
+    except HTTPStatusError as exc:
+        if exc.status == 404:
+            raise InspectionError("GitHub repository not found (wrong name, or it is private). It may also have been deleted or renamed; "
+                                  "check the URL.", code="repository_not_found")
+        if exc.status == 401:
+            raise InspectionError("GitHub rejected the configured GITHUB_TOKEN (HTTP 401). Remove or replace the token and run again.",
+                                  code="github_token_rejected")
+        if exc.status == 451:
+            raise InspectionError("GitHub reports that this repository is unavailable for legal reasons (HTTP 451).", code="repository_blocked")
+        if exc.status == 410:
+            raise InspectionError("GitHub reports that this repository is no longer available (HTTP 410).", code="repository_gone")
+        if exc.status in (403, 429):
+            api_ok, api_error = False, exc
+            info.warnings.append(f"GitHub API returned HTTP {exc.status} (rate limit or blocked). Falling back to "
+                                 "raw.githubusercontent.com for README/requirements only; set GITHUB_TOKEN to lift the limit.")
+            _gap(info, "api_unavailable", ("GitHub's API rate limit was reached" if _rate_limited(exc) else
+                                          f"GitHub refused the API request (HTTP {exc.status})")
+                 + ", so branch, file list and repository metadata are unknown")
+        else:
+            raise InspectionError(f"GitHub API returned HTTP {exc.status}." + (" GitHub may be having problems; try again later." if exc.status >= 500 else ""),
+                                  code="github_api_error")
+    except NetworkError as exc:
+        raise InspectionError(_net_msg(exc), code="network_error")
+    except FetchError as exc:
+        raise InspectionError(redact_secrets(str(exc)))
+
+    # Which revision is read: the one named in the URL, else the default branch. It is resolved to a commit once, and the file list and
+    # every file are then read at that commit, so they all describe the same state of the repository even if the branch moves meanwhile.
+    info.requested_revision = ref.revision
+    branch = ref.revision or info.default_branch or "HEAD"
+    try:
+        validate_revision(branch)
+    except SecurityError:
+        info.warnings.append("Default branch name is unusual; using HEAD.")
+        branch = "HEAD"
+    if _SHA40_RE.fullmatch(branch):
+        info.revision_kind = "commit"
+    elif ref.revision:
+        info.revision_kind = "requested-ref"
+    elif info.default_branch and branch == info.default_branch:
+        info.revision_kind = "default-branch"
+    else:
+        info.revision_kind = "head"
+    fetch_ref = branch  # the pinned commit once resolved; otherwise the branch name (the files then come from the branch tip)
+    if api_ok:
+        sha, why = _resolve_github_commit(api, branch, fetcher)
+        if sha:
+            info.commit_sha = fetch_ref = sha
+        else:
+            _gap(info, "revision_unpinned", f"the GitHub revision '{branch}' could not be resolved to a commit ({why})")
+
+    paths: List[Tuple[str, Optional[int]]] = []
+    if api_ok:
+        try:
+            tree = fetcher.get_json(f"{api}/git/trees/{fetch_ref}?recursive=1", gh_headers, max_bytes=4_000_000)
+            if tree.get("truncated"):
+                info.warnings.append("GitHub file tree was truncated; some files may be missing from analysis.")
+            for e in (tree.get("tree") or [])[: settings.max_tree_entries]:
+                if isinstance(e, dict) and e.get("type") == "blob" and isinstance(e.get("path"), str):
+                    paths.append((e["path"], e.get("size") if isinstance(e.get("size"), int) else None))
+        except HTTPStatusError as exc:
+            info.warnings.append(f"Could not list repository files (HTTP {exc.status}).")
+        except NetworkError as exc:
+            raise InspectionError(_net_msg(exc))
+        except FetchError as exc:
+            info.warnings.append(f"Could not list repository files: {redact_secrets(str(exc))[:100]}")
+    info.files = paths
+    names = {p.lower(): p for p, _ in paths}
+
+    wanted: List[str] = []
+    readme = next((names[k] for k in ("readme.md", "readme.rst", "readme.txt", "readme") if k in names), None)
+    if paths:
+        wanted = ([readme] if readme else []) + [c for c in GH_FETCH_CANDIDATES if c in names]
+    else:  # no tree (API blocked/failed): probe the common root files
+        wanted = ["README.md", "requirements.txt", "pyproject.toml"]
+    sizes = dict(paths)
+    for path in wanted[:6]:
+        if sizes.get(path) and sizes[path] > _MAX_SMALL_FILE:
+            info.warnings.append(f"{path} skipped (too large).")
+            continue
+        try:
+            res = fetcher.fetch(f"https://raw.githubusercontent.com/{ref.repo_id}/{fetch_ref}/{path}", max_bytes=_MAX_SMALL_FILE)
+        except HTTPStatusError as exc:
+            if exc.status != 404 or paths:
+                info.warnings.append(f"Could not fetch {path} (HTTP {exc.status}).")
+            continue
+        except NetworkError as exc:
+            info.warnings.append(f"Network problem fetching {path}: {redact_secrets(str(exc))[:100]}")
+            break
+        except FetchError:
+            continue
+        text = res.body.decode("utf-8", errors="replace")
+        info.fetched.append((path, len(res.body)))
+        low = path.lower()
+        if low.startswith("readme"):
+            info.readme = text[: settings.max_readme_chars]
+        elif low == "requirements.txt":
+            reqs, flags = parse_requirements(text)
+            info.requirements += [{**r, "source": path} for r in reqs]
+            info.requirement_flags += flags
+        elif low == "pyproject.toml":
+            info.requirements += [{**r, "source": path} for r in _parse_pyproject(text)]
+        elif low in ("setup.py", "setup.cfg"):
+            # Static text parse only: literal install_requires/keywords are read via ast / configparser, never executed.
+            if low == "setup.py":
+                reqs, kws, problem = parse_setup_py(text)
+            else:
+                (reqs, kws), problem = parse_setup_cfg(text), None
+            info.requirements += [{**r, "source": f"{path} install_requires"} for r in reqs]
+            info.package_keywords += kws
+            if not reqs:
+                info.warnings.append(f"{path} present; dependencies in it were not evaluated (it is not executed)"
+                                     + (f" ({problem})." if problem else "."))
+        elif low == "environment.yml":
+            info.warnings.append(f"{path} present; dependencies in it were not evaluated (it is not executed).")
+    seen, uniq = set(), []
+    for r in info.requirements:
+        if r["name"] not in seen:
+            seen.add(r["name"])
+            uniq.append(r)
+    info.requirements = uniq
+    info.requirement_flags = sorted(set(info.requirement_flags))
+
+    # Static source scan: a handful of small .py files fetched as TEXT and parsed with ast (never imported or run).
+    for path in (pick_source_files(paths) if paths else []):
+        try:
+            res = fetcher.fetch(f"https://raw.githubusercontent.com/{ref.repo_id}/{fetch_ref}/{path}", max_bytes=_MAX_SOURCE_FILE)
+        except HTTPStatusError:
+            continue
+        except NetworkError as exc:
+            info.warnings.append(f"Network problem fetching {path}; remaining source files skipped: {redact_secrets(str(exc))[:100]}")
+            break
+        except FetchError:
+            continue
+        info.fetched.append((path, len(res.body)))
+        scanned = scan_python_source(path, res.body.decode("utf-8", errors="replace"))
+        if scanned:
+            info.source_scan.append(scanned)
+
+    info.linked_hf_models = _find_hf_links(info.readme)
+    for sc in info.source_scan:  # from_pretrained("owner/name") literals found in code count as links too
+        for rid in sc["pretrained_ids"]:
+            if rid not in info.linked_hf_models and len(info.linked_hf_models) < 10:
+                try:
+                    validate_repo_id(rid)
+                except SecurityError:
+                    continue
+                info.linked_hf_models.append(rid)
+    info.primary_hf_model, info.hf_link_roles = rank_hf_links(info.readme, ref, info.linked_hf_models)
+    if info.primary_hf_model:
+        # Authoritative metadata for the repo's own model, read through the same allow-listed Hub inspector (no weights).
+        try:
+            info.primary_model_info = _inspect_hf(parse_source_url(f"https://huggingface.co/{info.primary_hf_model}"), fetcher, settings)
+        except (InspectionError, SecurityError) as exc:
+            info.warnings.append(f"Metadata for the primary linked model '{info.primary_hf_model}' could not be read: "
+                                 f"{redact_secrets(str(exc))[:140]}")
+    return info
+
+
+# --------------------------------------------------------------------------- entry points
+
+
+def inspect_source(ref: SourceRef, fetcher: Optional[SafeFetcher] = None, settings: Optional[Settings] = None) -> RepoInfo:
+    settings = settings or Settings()
+    fetcher = fetcher or SafeFetcher(settings)
+    if ref.kind == "huggingface":
+        return _inspect_hf(ref, fetcher, settings)
+    if ref.kind == "github":
+        return _inspect_github(ref, fetcher, settings)
+    raise InspectionError("Unsupported source kind.")
+
+
+def inspect_url(url: str, fetcher: Optional[SafeFetcher] = None, settings: Optional[Settings] = None) -> RepoInfo:
+    try:
+        ref = parse_source_url(url)
+    except SecurityError as exc:
+        raise InspectionError(f"Rejected URL: {exc}")
+    return inspect_source(ref, fetcher, settings)

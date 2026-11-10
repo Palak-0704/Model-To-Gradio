@@ -1,0 +1,115 @@
+##### opencode --version  [exit code 0]
+1.19.5
+
+--- stderr ---
+
+
+##### opencode mcp list  [exit code 0]
+[90m┌[39m  MCP Servers
+[90m│[39m
+[34m●[39m  ✓ rea [90mconnected
+[90m│[39m      [90mcmd.exe /c C:\Users\Palak\AppData\Roaming\npm\rea.cmd --mcp
+[90m│[39m
+[90m└[39m  1 server(s)
+
+
+--- stderr ---
+[0m
+
+
+##### opencode models  [exit code 0]
+opencode/beam-free
+opencode/big-pickle
+opencode/claude-fable-5
+opencode/claude-fable-5-1
+opencode/claude-haiku-4-5
+opencode/claude-haiku-5-5
+opencode/claude-opus-4-5
+opencode/claude-opus-4-6
+opencode/claude-opus-4-7
+opencode/claude-opus-4-8
+opencode/claude-opus-5
+opencode/claude-opus-5-5
+opencode/claude-sonnet-4-5
+opencode/claude-sonnet-4-6
+opencode/claude-sonnet-5
+opencode/claude-sonnet-5-5
+opencode/deepseek-v4-pro
+opencode/deepseek-v4.1-flash
+opencode/deepseek-v4.1-flash-free
+opencode/flint-40b-free
+opencode/gemini-3-flash
+opencode/gemini-3.1-pro
+opencode/gemini-3.5-flash
+opencode/gemini-3.5-flash-lite
+opencode/gemini-3.6-flash
+opencode/gemini-3.7-flash
+opencode/gemini-3.8-flash
+opencode/gemini-4-argon
+opencode/glm-5
+opencode/glm-5.1
+opencode/glm-5.2
+opencode/glm-5.3
+opencode/glm-5.3-flash
+opencode/glm-5.3-flash-free
+opencode/gpt-5
+opencode/gpt-5-codex
+opencode/gpt-5-nano
+opencode/gpt-5.1
+opencode/gpt-5.1-codex
+opencode/gpt-5.1-codex-max
+opencode/gpt-5.1-codex-mini
+opencode/gpt-5.2
+opencode/gpt-5.2-codex
+opencode/gpt-5.3-codex
+opencode/gpt-5.3-codex-spark
+opencode/gpt-5.4
+opencode/gpt-5.4-mini
+opencode/gpt-5.4-nano
+opencode/gpt-5.4-pro
+opencode/gpt-5.5
+opencode/gpt-5.5-pro
+opencode/gpt-5.6-luna
+opencode/gpt-5.6-sol
+opencode/gpt-5.6-terra
+opencode/gpt-6-astra
+opencode/gpt-6-luna
+opencode/gpt-6-sol
+opencode/gpt-6.1-sol
+opencode/grok-4.5
+opencode/grok-4.6
+opencode/grok-4.7
+opencode/grok-build-0.1
+opencode/kimi-k2.5
+opencode/kimi-k2.6
+opencode/kimi-k2.7-code
+opencode/kimi-k3
+opencode/mimo-v2.6-flash-free
+opencode/minimax-m2.5
+opencode/minimax-m2.7
+opencode/minimax-m3
+opencode/mistral-large-4
+opencode/muse-spark-1.2
+opencode/muse-spark-1.3
+opencode/muse-wonder-1.0
+opencode/nemotron-3.5-lightning-free
+opencode/nemotron-3.5-super-vl-free
+opencode/qwen3.5-plus
+opencode/qwen3.6-plus
+opencode/qwen3.8-flash
+opencode/qwen3.8-max
+groq/allam-2-7b
+groq/canopylabs/orpheus-arabic-saudi
+groq/canopylabs/orpheus-v1-english
+groq/meta-llama/llama-prompt-guard-2-22m
+groq/meta-llama/llama-prompt-guard-2-86m
+groq/openai/gpt-oss-120b
+groq/openai/gpt-oss-20b
+groq/openai/gpt-oss-safeguard-20b
+groq/qwen/qwen3.8-27b
+groq/whisper-large-v3
+groq/whisper-large-v3-turbo
+
+--- stderr ---
+
+

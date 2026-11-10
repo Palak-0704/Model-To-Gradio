@@ -1,0 +1,198 @@
+[
+  {
+    "check": "A synthetic SPARSE file -> real REA (plain header-only file as the negative control)",
+    "ok": true,
+    "sparse_file_logical_bytes": 168,
+    "header_only_file_bytes": 136,
+    "sparse_file_allocated_bytes": 168,
+    "command": [
+      "cmd.exe",
+      "/c",
+      "C:\\Users\\Palak\\AppData\\Roaming\\npm\\rea.cmd",
+      "--mcp"
+    ],
+    "server": {
+      "name": "rea",
+      "version": "6.8.0",
+      "protocolVersion": "2025-06-18"
+    },
+    "tools_discovered": 229,
+    "advertises_required_tools": {
+      "binary_session": true,
+      "inspect_model_artifact": true
+    },
+    "stderr_tail": "{\"level\":30,\"time\":1793431056521,\"application\":\"rea\",\"mode\":\"mcp\",\"layer\":\"server\",\"tool\":\"inspect_model_artifact\",\"durationMs\":17.99,\"status\":\"ok\",\"msg\":\"MCP tool execution completed\"}\n{\"level\":40,\"time\":1793431056527,\"application\":\"rea\",\"mode\":\"mcp\",\"layer\":\"server\",\"tool\":\"inspect_model_artifact\",\"durationMs\":2.66,\"status\":\"error\",\"msg\":\"MCP tool execution completed\"}",
+    "calls": [
+      {
+        "tool": "binary_session",
+        "arguments": {},
+        "ok": true,
+        "duration_s": 2.32,
+        "target": "server status",
+        "output": "{\"result\":{\"open\":false,\"cleanup_pending\":false,\"capabilities\":[{\"provider\":{\"id\":\"native-macos\",\"name\":\"macOS native inspection utilities\",\"version\":null},\"shared_limitations\":[\"Availability and textual formats depend on the installed macOS/Xcode toolchain.\"],\"groups\":[{\"operations\":[\"capture_native_ui_scenario\",\"observe_native_calls\"],\"effects\":[\"launches_process\",\"may_show_ui\",\"may_access_network\",\"may_write_filesystem\"],\"limitations\":[],\"available\":false,\"reason\":\"Native macOS utilities require macOS.\",\"availability_code\":\"unsupported_host\"},{\"operations\":[\"demangle_swift\",\"inspect_macho\",\"inspect_plist\",\"list_architectures\"],\"effects\":[\"launches_process\"],\"limitations\":[],\"available\":false,\"reason\":\"Native macOS utilities require macOS.\",\"availability_code\":\"unsupported_host\"},{\"operations\":[\"inspect_native_dispatch_metadata\"],\"effects\":[],\"limitations\":[],\"available\":false,\"reason\":\"Native macOS utilities require macOS.\",\"availability_code\":\"unsupported_host\"},{\"operations\":[\"inspect_signature\",\"observe_native_ui\"],\"effects\":[\"launches_process\",\"may_write_filesystem\"],\"limitations\":[],\"available\":false,\"reason\":\"Native macOS utilities require macOS.\",\"availability_code\":\"unsupported_host\"}]},{\"provider\":{\"id\":\"rea-artifact-graph\",\"name\":\"REA safe artifact graph provider\",\"version\":\"1\"},\"shared_limitations\":[\"DMG child inventory automatically uses a read-only native macOS mount; PKG remains root-hash-only.\",\"ASAR files discovered in filesystem-backed inventories are expanded without bulk extraction; other nested containers remain recorded only.\"],\"groups\":[{\"operations\":[\"decode_interface_builder\",\"inspect_keyed_archive\",\"trace_dylib_resolution\"],\"effects\":[],\"limitations\":[],\"available\":true,\"reason\":null,\"availability_code\":null},{\"operations\":[\"extract_artifact\",\"inspect_artifact\"],\"effects\":[\"launches_process\",\"may_write_filesystem\"],\"limitations\":[],\"available\":true,\"reason\":null,\"availability_code\":null},{\"operations\":[\"inspect_asset_catalog\"],\"effects\":[\"launches_process\"],\"limitations\":[],\"available\":false,\"reason\":\"Apple asset catalogs require macOS assetutil.\",\"availability_code\":\"unsupported_host\"}]},{\"provider\":{\"id\":\"rea-dotnet-static\",\"name\":\"REA managed static analysis provider\",\"version\":\"1\"},\"shared_limitations\":[],\"groups\":[{\"operations\":[\"inspect_managed_artifact\"],\"effects\":[],\"limitations\":[\"This capability inventories PE/CLI identity only; inspect_managed_members admits metadata members, signatures, and CIL anchors.\",\"It never loads the target assembly, resolves dependencies through a CLR, decompiles C#, or executes target code.\"],\"available\":true,\"reason\":null,\"availability_code\":null},{\"operations\":[\"inspect_managed_members\"],\"effects\":[],\"limitations\":[\"This capability decodes PE/CLI metadata members, signatures, and file-backed method bodies; decompiled C# reconstruction and cross-build member comparison are separate operations.\",\"It never loads the target assembly, resolves dependencies through a CLR, decompiles C#, or executes target code.\"],\"available\":true,\"reason\":null,\"availability_code\":null},{\"operations\":[\"inspect_managed_native_boundaries\"],\"effects\":[],\"limitations\":[\"This capability inventories managed declarations for native boundaries only; native exports, thunks, and addresses require separate native-provider evidence.\",\"It never loads the target assembly, resolves dependencies through a CLR, decompiles C#, or executes target code.\"],\"available\":true,\"reason\":null,\"availability_code\":null}]}],\"analysis_provider_binding\":null,\"analysis_provider_candidates\":[{\"provider\":{\"id\":\"ghidra\",\"name\":\"Ghidra\",\"version\":null},\"availability\":{\"status\":\"unavailable\",\"code\":\"not_configured\",\"reason\":\"Set GHIDRA_INSTALL_DIR to an extracted Ghidra 12.1.x release directory.\",\"diagnostics\":{\"install_dir\":null,\"analyze_headless_path\":null,\"native_decompiler_path\":null,\"application_properties_path\":null,\"provider_version\":null,\"java_command\":\"java.exe\",\"java_home\":null,\"java_version\":null,\"java_vm_name\":null,\"java_os_arch\":null,\"java_os_name\":null,\"platform\":\"win32\",\"architecture\":\"x64\",\"checks\":[{\"name\":\"configuration\",\"ok\":false,\"code\":\"not_configured\",\"detail\":\"GHIDRA_INSTALL_DIR is not set\"},{\"name\":\"platform\",\"ok\":true,\"code\":null,\"detail\":\"win32\"},{\"name\":\"architecture\",\"ok\":true,\"code\":null,\"detail\":\"x64\"},{\"name\":\"installation\",\"ok\":false,\"code\":\"executable_missing\",\"detail\":\"Ghidra application properties unavailable\"},{\"name\":\"version\",\"ok\":false,\"code\":\"version_unresolved\",\"detail\":\"unknown\"},{\"name\":\"headless\",\"ok\":false,\"code\":\"executable_missing\",\"detail\":\"analyzeHeadless unavailable\"},{\"name\":\"native_decompiler\",\"ok\":false,\"code\":\"executable_missing\",\"detail\":\"Matching native decompiler for win32/x64 was not found\"},{\"name\":\"java\",\"ok\":false,\"code\":\"version_unresolved\",\"detail\":\"java.exe; application.properties is unavailable\"}]}},\"target_support\":{\"status\":\"unknown\",\"code\":null,\"reason\":\"No target is open.\",\"diagnostics\":{}},\"selected\":false,\"capabilities\":[{\"provider\":{\"id\":\"ghidra\",\"name\":\"Ghidra\",\"version\":null},\"shared_limitations\":[\"The session serves operations only after Ghidra reports default auto-analysis complete; incomplete analysis does not expose partial results.\",\"The imported Program and temporary project are ephemeral and deleted on close. Annotation operations edit session database metadata; original executable bytes are never written.\",\"Cancelling an active Ghidra request terminates its ephemeral database and discards session annotations. The selected target remains open; the next provider query imports the original artifact again.\",\"Default-space addresses use lowercase 0x-prefixed hexadecimal; other address spaces use <percent-encoded-space>:0x<hex>.\"],\"groups\":[{\"operations\":[\"address_name\",\"inspect_native_data_type\",\"inspect_native_instruction\",\"procedure_callees\",\"procedure_callers\",\"procedure_info\",\"resolve_native_call_targets\"],\"effects\":[\"launches_process\",\"may_write_filesystem\"],\"limitations\":[\"Windows Ghidra P0 accepts native x86, x86-64, ARMNT (Thumb-2) and ARM64 PE applications and DLLs, and explicitly selected raw 6502 images; managed, hostile, sensitive, and mutable-path targets are unsupported.\",\"The Windows bridge uses authenticated IPv4 loopback because Node path-based IPC does not expose Java AF_UNIX sockets; the endpoint file contains no bearer token.\",\"Windows sessions require the matching packaged Windows x64 native addon, local NTFS targets and runtimes, and Windows 10 or later. Native handles enforce path admission, private DACLs, and Job Object ownership automatically.\"],\"available\":true,\"reason\":null,\"availability_code\":null},{\"operations\":[\"address_to_file_offset\"],\"effects\":[\"launches_process\",\"may_write_filesystem\"],\"limitations\":[\"Offsets come from Ghidra source-byte mappings, not virtual-address arithmetic. Uninitialized memory, missing mappings and ambiguous mappings fail explicitly.\",\"Windows Ghidra P0 accepts native x86, x86-64, ARMNT (Thumb-2) and ARM64 PE applications and DLLs, and explicitly selected raw 6502 images; managed, hostile, sensitive, and mutable-path targets are unsupported.\",\"The Windows bridge uses authenticated IPv4 loopback because Node path-based IPC does not expose Java AF_UNIX sockets; the endpoint file contains no bearer token.\",\"Windows sessions require the matching packaged Windows x64 native addon, local NTFS targets and runtimes, and Windows 10 or later. Native handles enforce path admission, private DACLs, and Job Object ownership automatically.\"],\"available\":true,\"reason\":null,\"availability_code\":null},{\"operations\":[\"analyze_function\"],\"effects\":[\"launches_process\",\"may_write_filesystem\"],\"limitations\":[\"References cover the complete Ghidra function-body AddressSet and exact entry. Dossier incoming edges omit sources owned by that function; procedure_references also retains those internal edges.\",\"The dossier combines Ghidra FunctionManager, Listing, ReferenceManager, BasicBlockModel, and decompiler observations; provider-specifi",
+        "output_truncated": true,
+        "error": null
+      },
+      {
+        "tool": "inspect_model_artifact",
+        "arguments": {
+          "path": "D:\\Model To Gradio\\.m2g\\rea_probe\\synthetic_sparse.safetensors",
+          "hash": "header",
+          "detail": "summary"
+        },
+        "ok": true,
+        "duration_s": 0.02,
+        "target": "synthetic_sparse.safetensors",
+        "output": "{\"evidence_id\":\"ev_5a0ea2c81f60d566c7666fa069a1fd21f2a6920aad8aac5766b5be111875b551\",\"subject\":null,\"provider\":{\"id\":\"rea-analysis-view\",\"name\":\"REA analysis view projection\",\"version\":\"1\"},\"analysis_profile\":null,\"predicate_type\":\"rea.analysis-view\",\"operation\":\"inspect_analysis_view\",\"parameters\":{\"parent_evidence_id\":\"ev_d05a10487dc039e6e312ba8b36f7f26e8e16a89482952ccfaf2dac0de90179d6\",\"view\":{\"kind\":\"summary\"}},\"raw_result\":null,\"normalized_result\":{\"kind\":\"summary\",\"view\":{\"kind\":\"summary\"},\"parent_evidence_id\":\"ev_d05a10487dc039e6e312ba8b36f7f26e8e16a89482952ccfaf2dac0de90179d6\",\"parent_operation\":\"inspect_model_artifact\",\"parent_digest\":\"d05a10487dc039e6e312ba8b36f7f26e8e16a89482952ccfaf2dac0de90179d6\",\"view_digest\":\"5979e5609338f8571bd5557f414dbcbdb4ca5d2694921e43a8bfdaead335b46e\",\"artifact\":{\"path\":\"D:\\\\Model To Gradio\\\\.m2g\\\\rea_probe\\\\synthetic_sparse.safetensors\",\"sha256\":null},\"coverage\":{\"status\":\"complete-within-view\",\"examined\":1,\"total\":1,\"next_offset\":null,\"exhausted\":true},\"limitations\":[\"Facts are file declarations; model behavior, weight values and compatibility with an inference runtime were not verified.\",\"Full-file SHA-256 is unknown because tensor data was not read.\",\"Full-file identity is unknown in header-only mode; normalized_result.artifact records a scoped header SHA-256 and exact source path/extent.\",\"Header SHA-256 commits only to the recorded prefix; file size is a separate observation. Different weights may share these declarations.\"],\"unknowns\":[\"Tensor values, runtime execution and inference quality were not inspected.\",\"Full-file content identity is unknown; header_sha256 commits only to declarations.\"],\"summary\":{\"artifact\":{\"path\":\"D:\\\\Model To Gradio\\\\.m2g\\\\rea_probe\\\\synthetic_sparse.safetensors\",\"file_size\":168,\"header_sha256\":\"cf6fa9172fcba4fb296666df8489bb32434cdc84b78cac0135d6963e0e95283c\",\"header_length\":136,\"sha256\":null,\"bytes_read\":136,\"read_scope\":\"header\"},\"format\":\"safetensors\",\"version\":null,\"byte_order\":\"little\",\"alignment\":null,\"tensor_data_offset\":136,\"coverage\":{\"header\":\"complete\",\"tensor_data\":\"not-interpreted\",\"array_values\":\"complete\",\"tensor_ranges\":\"complete\",\"storage_sizes\":\"complete\"},\"limitations\":[\"Facts are file declarations; model behavior, weight values and compatibility with an inference runtime were not verified.\",\"Full-file SHA-256 is unknown because tensor data was not read.\",\"Header SHA-256 commits only to the recorded prefix; file size is a separate observation. Different weights may share these declarations.\"],\"totals\":{\"confidence\":\"derived\",\"parameter_count\":\"10\",\"tensor_bytes\":32},\"counts\":{\"metadata\":0,\"tensors\":2,\"types\":2},\"headlines\":[],\"chat_template_present\":false}},\"confidence\":\"derived\",\"authority\":\"shipped-artifact\",\"environment\":null,\"limitations\":[\"Artifact identity is unavailable for this observation.\",\"Facts are file declarations; model behavior, weight values and compatibility with an inference runtime were not verified.\",\"Full-file SHA-256 is unknown because tensor data was not read.\",\"Full-file identity is unknown in header-only mode; normalized_result.artifact records a scoped header SHA-256 and exact source path/extent.\",\"Header SHA-256 commits only to the recorded prefix; file size is a separate observation. Different weights may share these declarations.\"],\"relationship_coverage\":null,\"locations\":[{\"kind\":\"artifact-path\",\"path\":\"D:\\\\Model To Gradio\\\\.m2g\\\\rea_probe\\\\synthetic_sparse.safetensors\"}],\"evidence_links\":[\"ev_d05a10487dc039e6e312ba8b36f7f26e8e16a89482952ccfaf2dac0de90179d6\"]}",
+        "output_truncated": false,
+        "error": null
+      },
+      {
+        "tool": "inspect_model_artifact",
+        "arguments": {
+          "path": "D:\\Model To Gradio\\.m2g\\rea_probe\\synthetic_header_only.safetensors",
+          "hash": "header",
+          "detail": "summary"
+        },
+        "ok": false,
+        "duration_s": 0.0,
+        "target": "synthetic_header_only.safetensors (negative control)",
+        "output": "{\"error\":{\"code\":\"target_unavailable\",\"category\":\"unsupported_target\",\"message\":\"Cannot open artifact: Safetensors tensor b range [24,32) is outside the data buffer.\",\"retryable\":false,\"remediation\":{\"action\":\"Review the reported file-format reason and select a supported, well-formed target.\"},\"details\":{\"path\":\"D:\\\\Model To Gradio\\\\.m2g\\\\rea_probe\\\\synthetic_header_only.safetensors\",\"reason\":\"Safetensors tensor b range [24,32) is outside the data buffer\",\"constraint\":\"file_format_rejected\"}}}",
+        "output_truncated": false,
+        "error": "{\"error\":{\"code\":\"target_unavailable\",\"category\":\"unsupported_target\",\"message\":\"Cannot open artifact: Safetensors tensor b range [24,32) is outside the data buffer.\",\"retryable\":false,\"remediation\":{\"action\":\"Review the reported file-format reason and select a supported, well-formed target.\"},\"deta"
+      }
+    ],
+    "control_rejected_as_before": true,
+    "probe_files_removed": true
+  },
+  {
+    "check": "B real header fetch + real REA through run_rea_inspection",
+    "url": "https://huggingface.co/distilbert/distilbert-base-uncased-finetuned-sst-2-english",
+    "ok": true,
+    "seconds": 6.2,
+    "report": {
+      "status": "completed",
+      "reason": "REA inspected the header of all 1 safetensors file(s).",
+      "server": {
+        "name": "rea",
+        "version": "6.8.0",
+        "protocolVersion": "2025-06-18"
+      },
+      "tools_discovered": 229,
+      "calls": [
+        {
+          "tool": "binary_session",
+          "arguments": {},
+          "ok": true,
+          "duration_s": 2.31,
+          "target": "server status",
+          "output": "{\"result\":{\"open\":false,\"cleanup_pending\":false,\"capabilities\":[{\"provider\":{\"id\":\"native-macos\",\"name\":\"macOS native inspection utilities\",\"version\":null},\"shared_limitations\":[\"Availability and textual formats depend on the installed macOS/Xcode toolchain.\"],\"groups\":[{\"operations\":[\"capture_native_ui_scenario\",\"observe_native_calls\"],\"effects\":[\"launches_process\",\"may_show_ui\",\"may_access_network\",\"may_write_filesystem\"],\"limitations\":[],\"available\":false,\"reason\":\"Native macOS utilities require macOS.\",\"availability_code\":\"unsupported_host\"},{\"operations\":[\"demangle_swift\",\"inspect_macho\",\"inspect_plist\",\"list_architectures\"],\"effects\":[\"launches_process\"],\"limitations\":[],\"available\":false,\"reason\":\"Native macOS utilities require macOS.\",\"availability_code\":\"unsupported_host\"},{\"operations\":[\"inspect_native_dispatch_metadata\"],\"effects\":[],\"limitations\":[],\"available\":false,\"reason\":\"Native macOS utilities require macOS.\",\"availability_code\":\"unsupported_host\"},{\"operations\":[\"inspect_signature\",\"observe_native_ui\"],\"effects\":[\"launches_process\",\"may_write_filesystem\"],\"limitations\":[],\"available\":false,\"reason\":\"Native macOS utilities require macOS.\",\"availability_code\":\"unsupported_host\"}]},{\"provider\":{\"id\":\"rea-artifact-graph\",\"name\":\"REA safe artifact graph provider\",\"version\":\"1\"},\"shared_limitations\":[\"DMG child inventory automatically uses a read-only native macOS mount; PKG remains root-hash-only.\",\"ASAR files discovered in filesystem-backed inventories are expanded without bulk extraction; other nested containers remain recorded only.\"],\"groups\":[{\"operations\":[\"decode_interface_builder\",\"inspect_keyed_archive\",\"trace_dylib_resolution\"],\"effects\":[],\"limitations\":[],\"available\":true,\"reason\":null,\"availability_code\":null},{\"operations\":[\"extract_artifact\",\"inspect_artifact\"],\"effects\":[\"launches_process\",\"may_write_filesystem\"],\"limitations\":[],\"available\":true,\"reason\":null,\"availability_code\":null},{\"operations\":[\"inspect_asset_catalog\"],\"effects\":[\"launches_process\"],\"limitations\":[],\"available\":false,\"reason\":\"Apple asset catalogs require macOS assetutil.\",\"availability_code\":\"unsupported_host\"}]},{\"provider\":{\"id\":\"rea-dotnet-static\",\"name\":\"REA managed static analysis provider\",\"version\":\"1\"},\"shared_limitations\":[],\"groups\":[{\"operations\":[\"inspect_managed_artifact\"],\"effects\":[],\"limitations\":[\"This capability inventories PE/CLI identity only; inspect_managed_members admits metadata members, signatures, and CIL anchors.\",\"It never loads the target assembly, resolves dependencies through a CLR, decompiles C#, or executes target code.\"],\"available\":true,\"reason\":null,\"availability_code\":null},{\"operations\":[\"inspect_managed_members\"],\"effects\":[],\"limitations\":[\"This capability decodes PE/CLI metadata members, signatures, and file-backed method bodies; decompiled C# reconstruction and cross-build member comparison are separate operations.\",\"It never loads the target assembly, resolves dependencies through a CLR, decompiles C#, or executes target code.\"],\"available\":true,\"reason\":null,\"availability_code\":null},{\"operations\":[\"inspect_managed_native_boundaries\"],\"effects\":[],\"limitations\":[\"This capability inventories managed declarations for native boundaries only; native exports, thunks, and addresses require separate native-provider evidence.\",\"It never loads the target assembly, resolves dependencies through a CLR, decompiles C#, or executes target code.\"],\"available\":true,\"reason\":null,\"availability_code\":null}]}],\"analysis_provider_binding\":null,\"analysis_provider_candidates\":[{\"provider\":{\"id\":\"ghidra\",\"name\":\"Ghidra\",\"version\":null},\"availability\":{\"status\":\"unavailable\",\"code\":\"not_configured\",\"reason\":\"Set GHIDRA_INSTALL_DIR to an extracted Ghidra 12.1.x release directory.\",\"diagnostics\":{\"install_dir\":null,\"analyze_headless_path\":null,\"native_decompiler_path\":null,\"application_properties_path\":null,\"provider_version\":null,\"java_command\":\"java.exe\",\"java_home\":null,\"java_version\":null,\"java_vm_name\":null,\"java_os_arch\":null,\"java_os_name\":null,\"platform\":\"win32\",\"architecture\":\"x64\",\"checks\":[{\"name\":\"configuration\",\"ok\":false,\"code\":\"not_configured\",\"detail\":\"GHIDRA_INSTALL_DIR is not set\"},{\"name\":\"platform\",\"ok\":true,\"code\":null,\"detail\":\"win32\"},{\"name\":\"architecture\",\"ok\":true,\"code\":null,\"detail\":\"x64\"},{\"name\":\"installation\",\"ok\":false,\"code\":\"executable_missing\",\"detail\":\"Ghidra application properties unavailable\"},{\"name\":\"version\",\"ok\":false,\"code\":\"version_unresolved\",\"detail\":\"unknown\"},{\"name\":\"headless\",\"ok\":false,\"code\":\"executable_missing\",\"detail\":\"analyzeHeadless unavailable\"},{\"name\":\"native_decompiler\",\"ok\":false,\"code\":\"executable_missing\",\"detail\":\"Matching native decompiler for win32/x64 was not found\"},{\"name\":\"java\",\"ok\":false,\"code\":\"version_unresolved\",\"detail\":\"java.exe; application.properties is unavailable\"}]}},\"target_support\":{\"status\":\"unknown\",\"code\":null,\"reason\":\"No target is open.\",\"diagnostics\":{}},\"selected\":false,\"capabilities\":[{\"provider\":{\"id\":\"ghidra\",\"name\":\"Ghidra\",\"version\":null},\"shared_limitations\":[\"The session serves operations only after Ghidra reports default auto-analysis complete; incomplete analysis does not expose partial results.\",\"The imported Program and temporary project are ephemeral and deleted on close. Annotation operations edit session database metadata; original executable bytes are never written.\",\"Cancelling an active Ghidra request terminates its ephemeral database and discards session annotations. The selected target remains open; the next provider query imports the original artifact again.\",\"Default-space addresses use lowercase 0x-prefixed hexadecimal; other address spaces use <percent-encoded-space>:0x<hex>.\"],\"groups\":[{\"operations\":[\"address_name\",\"inspect_native_data_type\",\"inspect_native_instruction\",\"procedure_callees\",\"procedure_callers\",\"procedure_info\",\"resolve_native_call_targets\"],\"effects\":[\"launches_process\",\"may_write_filesystem\"],\"limitations\":[\"Windows Ghidra P0 accepts native x86, x86-64, ARMNT (Thumb-2) and ARM64 PE applications and DLLs, and explicitly selected raw 6502 images; managed, hostile, sensitive, and mutable-path targets are unsupported.\",\"The Windows bridge uses authenticated IPv4 loopback because Node path-based IPC does not expose Java AF_UNIX sockets; the endpoint file contains no bearer token.\",\"Windows sessions require the matching packaged Windows x64 native addon, local NTFS targets and runtimes, and Windows 10 or later. Native handles enforce path admission, private DACLs, and Job Object ownership automatically.\"],\"available\":true,\"reason\":null,\"availability_code\":null},{\"operations\":[\"address_to_file_offset\"],\"effects\":[\"launches_process\",\"may_write_filesystem\"],\"limitations\":[\"Offsets come from Ghidra source-byte mappings, not virtual-address arithmetic. Uninitialized memory, missing mappings and ambiguous mappings fail explicitly.\",\"Windows Ghidra P0 accepts native x86, x86-64, ARMNT (Thumb-2) and ARM64 PE applications and DLLs, and explicitly selected raw 6502 images; managed, hostile, sensitive, and mutable-path targets are unsupported.\",\"The Windows bridge uses authenticated IPv4 loopback because Node path-based IPC does not expose Java AF_UNIX sockets; the endpoint file contains no bearer token.\",\"Windows sessions require the matching packaged Windows x64 native addon, local NTFS targets and runtimes, and Windows 10 or later. Native handles enforce path admission, private DACLs, and Job Object ownership automatically.\"],\"available\":true,\"reason\":null,\"availability_code\":null},{\"operations\":[\"analyze_function\"],\"effects\":[\"launches_process\",\"may_write_filesystem\"],\"limitations\":[\"References cover the complete Ghidra function-body AddressSet and exact entry. Dossier incoming edges omit sources owned by that function; procedure_references also retains those internal edges.\",\"The dossier combines Ghidra FunctionManager, Listing, ReferenceManager, BasicBlockModel, and decompiler observations; provider-specifi",
+          "output_truncated": true,
+          "error": null
+        },
+        {
+          "tool": "inspect_model_artifact",
+          "arguments": {
+            "path": "D:\\Model To Gradio\\.m2g\\rea\\hdr_mf3t6qe7\\shard_0.safetensors",
+            "hash": "header",
+            "detail": "summary"
+          },
+          "ok": true,
+          "duration_s": 0.04,
+          "target": "model.safetensors",
+          "output": "{\"evidence_id\":\"ev_222c31ccf05ec191927c7dab78bbf038af9e8152bd50e2feb16cd8ae7ea5f788\",\"subject\":null,\"provider\":{\"id\":\"rea-analysis-view\",\"name\":\"REA analysis view projection\",\"version\":\"1\"},\"analysis_profile\":null,\"predicate_type\":\"rea.analysis-view\",\"operation\":\"inspect_analysis_view\",\"parameters\":{\"parent_evidence_id\":\"ev_6dc441fd6ecbc65941dda8d1f0a8c96cd98fb753ec14f5c3fdbc5b96d37aa128\",\"view\":{\"kind\":\"summary\"}},\"raw_result\":null,\"normalized_result\":{\"kind\":\"summary\",\"view\":{\"kind\":\"summary\"},\"parent_evidence_id\":\"ev_6dc441fd6ecbc65941dda8d1f0a8c96cd98fb753ec14f5c3fdbc5b96d37aa128\",\"parent_operation\":\"inspect_model_artifact\",\"parent_digest\":\"6dc441fd6ecbc65941dda8d1f0a8c96cd98fb753ec14f5c3fdbc5b96d37aa128\",\"view_digest\":\"3e04633c156476b2e91e01eb1188a2a7b194c4bc99912f1fe4cda66f7b14e74f\",\"artifact\":{\"path\":\"D:\\\\Model To Gradio\\\\.m2g\\\\rea\\\\hdr_mf3t6qe7\\\\shard_0.safetensors\",\"sha256\":null},\"coverage\":{\"status\":\"complete-within-view\",\"examined\":1,\"total\":1,\"next_offset\":null,\"exhausted\":true},\"limitations\":[\"Facts are file declarations; model behavior, weight values and compatibility with an inference runtime were not verified.\",\"Full-file SHA-256 is unknown because tensor data was not read.\",\"Full-file identity is unknown in header-only mode; normalized_result.artifact records a scoped header SHA-256 and exact source path/extent.\",\"Header SHA-256 commits only to the recorded prefix; file size is a separate observation. Different weights may share these declarations.\"],\"unknowns\":[\"Tensor values, runtime execution and inference quality were not inspected.\",\"Full-file content identity is unknown; header_sha256 commits only to declarations.\"],\"summary\":{\"artifact\":{\"path\":\"D:\\\\Model To Gradio\\\\.m2g\\\\rea\\\\hdr_mf3t6qe7\\\\shard_0.safetensors\",\"file_size\":267832558,\"header_sha256\":\"04b7c77790681bf8b99db324d3641b8fdb8f9e8b32acf15d79054ddcf7765b9e\",\"header_length\":12518,\"sha256\":null,\"bytes_read\":12518,\"read_scope\":\"header\"},\"format\":\"safetensors\",\"version\":null,\"byte_order\":\"little\",\"alignment\":null,\"tensor_data_offset\":12518,\"coverage\":{\"header\":\"complete\",\"tensor_data\":\"not-interpreted\",\"array_values\":\"complete\",\"tensor_ranges\":\"complete\",\"storage_sizes\":\"complete\"},\"limitations\":[\"Facts are file declarations; model behavior, weight values and compatibility with an inference runtime were not verified.\",\"Full-file SHA-256 is unknown because tensor data was not read.\",\"Header SHA-256 commits only to the recorded prefix; file size is a separate observation. Different weights may share these declarations.\"],\"totals\":{\"confidence\":\"derived\",\"parameter_count\":\"66955010\",\"tensor_bytes\":267820040},\"counts\":{\"metadata\":1,\"tensors\":104,\"types\":1},\"headlines\":[{\"index\":0,\"key\":\"format\",\"type\":\"STRING\",\"value\":\"pt\",\"element_type\":null,\"element_count\":null,\"preview_complete\":true}],\"chat_template_present\":false}},\"confidence\":\"derived\",\"authority\":\"shipped-artifact\",\"environment\":null,\"limitations\":[\"Artifact identity is unavailable for this observation.\",\"Facts are file declarations; model behavior, weight values and compatibility with an inference runtime were not verified.\",\"Full-file SHA-256 is unknown because tensor data was not read.\",\"Full-file identity is unknown in header-only mode; normalized_result.artifact records a scoped header SHA-256 and exact source path/extent.\",\"Header SHA-256 commits only to the recorded prefix; file size is a separate observation. Different weights may share these declarations.\"],\"relationship_coverage\":null,\"locations\":[{\"kind\":\"artifact-path\",\"path\":\"D:\\\\Model To Gradio\\\\.m2g\\\\rea\\\\hdr_mf3t6qe7\\\\shard_0.safetensors\"}],\"evidence_links\":[\"ev_6dc441fd6ecbc65941dda8d1f0a8c96cd98fb753ec14f5c3fdbc5b96d37aa128\"]}",
+          "output_truncated": false,
+          "error": null
+        }
+      ],
+      "header_summaries": [
+        {
+          "file": "model.safetensors",
+          "header_bytes": 12510,
+          "tensor_count": 104,
+          "parameters": 66955010,
+          "dtypes": {
+            "F32": 66955010
+          },
+          "data_bytes": 267820040,
+          "logical_size": 267832558,
+          "allocated_bytes": 65536
+        }
+      ],
+      "shards_total": 1,
+      "shards_inspected": 1,
+      "bytes_downloaded": 12518,
+      "http_requests": 2,
+      "health_check": "ran",
+      "findings": [
+        "model.safetensors: 104 tensors, 66,955,010 parameters, dtypes F32 (66,955,010) (REA read this header)."
+      ],
+      "log": [
+        "[  0.00s] Plan: header-only inspection of 1 of 1 safetensors file(s) in distilbert/distilbert-base-uncased-finetuned-sst-2-english@714eb0fa89d2 with REA tools ['binary_session', 'inspect_model_artifact'].",
+        "[  2.97s] Fetched header of model.safetensors: 12510 bytes, 104 tensors, 66,955,010 parameters; sparse scratch file 267,832,558 bytes logical, 65,536 bytes on disk (no weights downloaded).",
+        "[  2.97s] Downloaded 12,518 bytes in 2 range request(s).",
+        "[  2.97s] Starting REA MCP server: cmd.exe /c C:\\Users\\Palak\\AppData\\Roaming\\npm\\rea.cmd --mcp",
+        "[  3.61s] initialize ok: rea 6.8.0 (MCP 2025-06-18)",
+        "[  3.73s] tools/list: 229 tools advertised",
+        "[  6.05s] tools/call binary_session [server status] -> ok (2.31s)",
+        "[  6.08s] tools/call inspect_model_artifact [model.safetensors] -> ok (0.04s)",
+        "[  6.15s] status=completed: REA inspected the header of all 1 safetensors file(s)."
+      ]
+    },
+    "tools_invoked": [
+      "binary_session",
+      "inspect_model_artifact"
+    ],
+    "safetensors_http_hops": [
+      "https://huggingface.co/distilbert/distilbert-base-uncased-finetuned-sst-2-english/resolve/714eb0fa89d2f80546fda750413ed43d93601a13/model.safetensors",
+      "https://us.aws.cdn.hf.co/xet-bridge-us/621ffdc036468d709f174346/8f5bd24518cc18de2a591e24027100367709bfcb9829ba16749752f1b21cf6da",
+      "https://huggingface.co/distilbert/distilbert-base-uncased-finetuned-sst-2-english/resolve/714eb0fa89d2f80546fda750413ed43d93601a13/model.safetensors",
+      "https://us.aws.cdn.hf.co/xet-bridge-us/621ffdc036468d709f174346/8f5bd24518cc18de2a591e24027100367709bfcb9829ba16749752f1b21cf6da"
+    ],
+    "http_range_requests": 2,
+    "bytes_downloaded": 12518,
+    "scratch_leftovers": []
+  },
+  {
+    "check": "C REA does not read the sparse payload (read counters of REA's process tree)",
+    "ok": true,
+    "big_logical_bytes": 3221225472,
+    "big_allocated_bytes": 65536,
+    "runs": [
+      {
+        "file": "warmup.safetensors",
+        "logical_bytes": 1048576,
+        "hash": "header",
+        "ok": true,
+        "error": null,
+        "seconds": 2.07,
+        "bytes_read_delta": 15801267,
+        "processes_in_tree": 3
+      },
+      {
+        "file": "big_sparse.safetensors",
+        "logical_bytes": 3221225472,
+        "hash": "header",
+        "ok": true,
+        "error": null,
+        "seconds": 0.01,
+        "bytes_read_delta": 294,
+        "processes_in_tree": 3
+      },
+      {
+        "file": "control_sparse.safetensors",
+        "logical_bytes": 268435456,
+        "hash": "full",
+        "ok": true,
+        "error": null,
+        "seconds": 0.29,
+        "bytes_read_delta": 268435667,
+        "processes_in_tree": 3
+      }
+    ],
+    "counter_sees_reads": true,
+    "payload_not_read": true,
+    "verdict": "PASS: hash=header on a 3 GiB sparse file read 294 bytes; hash=full on a 256 MiB file read 268,435,667 bytes",
+    "probe_files_removed": true
+  }
+]

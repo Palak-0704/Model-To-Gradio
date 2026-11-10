@@ -1,0 +1,656 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Model to Gradio — AI Developer Platform</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <!-- App Shell -->
+  <div id="app" class="app-shell">
+
+    <!-- Sidebar -->
+    <aside id="sidebar" class="sidebar" role="navigation" aria-label="Main navigation">
+      <div class="sidebar-header">
+        <div class="sidebar-logo">
+          <div class="sidebar-logo-icon">
+            <svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <rect width="32" height="32" rx="8" fill="url(#logoGrad)"/>
+              <path d="M8 16L14 10L20 16L26 10" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="M8 22L14 16L20 22L26 16" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.6"/>
+              <defs>
+                <linearGradient id="logoGrad" x1="0" y1="0" x2="32" y2="32" gradientUnits="userSpaceOnUse">
+                  <stop stop-color="#6366F1"/>
+                  <stop offset="1" stop-color="#8B5CF6"/>
+                </linearGradient>
+              </defs>
+            </svg>
+          </div>
+          <span class="sidebar-logo-text">M2G Platform</span>
+        </div>
+        <button class="sidebar-toggle" id="sidebarToggle" aria-label="Toggle sidebar" title="Toggle sidebar">
+          <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M3 5a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM3 10a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM3 15a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1z" clip-rule="evenodd"/></svg>
+        </button>
+      </div>
+
+      <nav class="sidebar-nav">
+        <div class="nav-section">
+          <button class="nav-item active" data-page="dashboard" aria-current="page">
+            <svg class="nav-icon" viewBox="0 0 20 20" fill="currentColor"><path d="M3 4a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H4a1 1 0 01-1-1V4zM3 10a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H4a1 1 0 01-1-1v-6zM14 9a1 1 0 00-1 1v6a1 1 0 001 1h2a1 1 0 001-1v-6a1 1 0 00-1-1h-2z"/></svg>
+            <span class="nav-label">Dashboard</span>
+          </button>
+          <button class="nav-item" data-page="analyzer">
+            <svg class="nav-icon" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1110.89 3.476l4.817 4.817a1 1 0 01-1.414 1.414l-4.816-4.816A6 6 0 012 8z" clip-rule="evenodd"/></svg>
+            <span class="nav-label">Model Analyzer</span>
+          </button>
+          <button class="nav-item" data-page="insights">
+            <svg class="nav-icon" viewBox="0 0 20 20" fill="currentColor"><path d="M9 2a1 1 0 000 2h2a1 1 0 100-2H9z"/><path fill-rule="evenodd" d="M4 5a2 2 0 012-2 3 3 0 003 3h2a3 3 0 003-3 2 2 0 012 2v11a2 2 0 01-2 2H6a2 2 0 01-2-2V5zm3 4a1 1 0 000 2h.01a1 1 0 100-2H7zm3 0a1 1 0 000 2h3a1 1 0 100-2h-3zm-3 4a1 1 0 100 2h.01a1 1 0 100-2H7zm3 0a1 1 0 100 2h3a1 1 0 100-2h-3z" clip-rule="evenodd"/></svg>
+            <span class="nav-label">Model Insights</span>
+          </button>
+          <button class="nav-item" data-page="generator">
+            <svg class="nav-icon" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M12.316 3.051a1 1 0 01.633 1.265l-4 12a1 1 0 11-1.898-.632l4-12a1 1 0 011.265-.633zM5.707 6.293a1 1 0 010 1.414L3.414 10l2.293 2.293a1 1 0 11-1.414 1.414l-3-3a1 1 0 010-1.414l3-3a1 1 0 011.414 0zm8.586 0a1 1 0 011.414 0l3 3a1 1 0 010 1.414l-3 3a1 1 0 11-1.414-1.414L16.586 10l-2.293-2.293a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>
+            <span class="nav-label">App Generator</span>
+          </button>
+          <button class="nav-item" data-page="apps">
+            <svg class="nav-icon" viewBox="0 0 20 20" fill="currentColor"><path d="M7 3a1 1 0 000 2h6a1 1 0 000-2H7zM4 7a1 1 0 011-1h10a1 1 0 110 2H5a1 1 0 01-1-1zM2 11a2 2 0 012-2h12a2 2 0 012 2v4a2 2 0 01-2 2H4a2 2 0 01-2-2v-4z"/></svg>
+            <span class="nav-label">Generated Apps</span>
+            <span class="nav-badge" id="appsCount" style="display:none"></span>
+          </button>
+        </div>
+        <div class="nav-divider"></div>
+        <div class="nav-section">
+          <button class="nav-item" data-page="deployment">
+            <svg class="nav-icon" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>
+            <span class="nav-label">Deployment</span>
+          </button>
+          <button class="nav-item" data-page="activity">
+            <svg class="nav-icon" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M3 3a1 1 0 000 2v8a2 2 0 002 2h2.586l-1.293 1.293a1 1 0 101.414 1.414L10 15.414l2.293 2.293a1 1 0 001.414-1.414L12.414 15H15a2 2 0 002-2V5a1 1 0 100-2H3zm11 4a1 1 0 10-2 0v4a1 1 0 102 0V7zm-3 1a1 1 0 10-2 0v3a1 1 0 102 0V8zM8 9a1 1 0 00-2 0v2a1 1 0 102 0V9z" clip-rule="evenodd"/></svg>
+            <span class="nav-label">Activity & Logs</span>
+          </button>
+        </div>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="sidebar-version">v0.1.0</div>
+      </div>
+    </aside>
+
+    <!-- Main Content -->
+    <div class="main-wrapper">
+      <!-- Header -->
+      <header class="topbar" role="banner">
+        <div class="topbar-left">
+          <button class="topbar-menu-btn" id="mobileMenuBtn" aria-label="Open menu">
+            <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M3 5a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM3 10a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM3 15a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1z" clip-rule="evenodd"/></svg>
+          </button>
+          <h1 class="topbar-title" id="pageTitle">Dashboard</h1>
+        </div>
+        <div class="topbar-right">
+          <div id="analysisStatus" class="topbar-status" style="display:none"></div>
+          <button class="topbar-btn" id="analyzeQuickBtn" title="Analyze a model">
+            <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clip-rule="evenodd"/></svg>
+            <span>Analyze Model</span>
+          </button>
+          <div class="notif-bell" id="notifBell" role="button" tabindex="0" aria-label="Notifications">
+            <svg viewBox="0 0 20 20" fill="currentColor"><path d="M10 2a6 6 0 00-6 6v3.586l-.707.707A1 1 0 004 14h12a1 1 0 00.707-1.707L16 11.586V8a6 6 0 00-6-6zM10 18a3 3 0 01-3-3h6a3 3 0 01-3 3z"/></svg>
+            <span class="notif-dot" id="notifDot" style="display:none"></span>
+          </div>
+        </div>
+      </header>
+
+      <!-- Page Container -->
+      <main class="page-container" id="pageContainer" role="main">
+
+        <!-- ── DASHBOARD ── -->
+        <section class="page" id="page-dashboard" data-page="dashboard">
+          <div class="page-inner">
+            <div class="dashboard-welcome" id="dashWelcome">
+              <div class="welcome-content">
+                <div class="welcome-icon">
+                  <div class="ai-glow">
+                    <svg viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <circle cx="32" cy="32" r="28" stroke="url(#welcomeGrad)" stroke-width="2"/>
+                      <path d="M20 32C20 25.373 25.373 20 32 20C38.627 20 44 25.373 44 32" stroke="url(#welcomeGrad)" stroke-width="2.5" stroke-linecap="round"/>
+                      <circle cx="32" cy="32" r="6" fill="url(#welcomeGrad)"/>
+                      <path d="M32 14V18M32 46V50M14 32H18M46 32H50" stroke="url(#welcomeGrad)" stroke-width="2" stroke-linecap="round"/>
+                      <defs>
+                        <linearGradient id="welcomeGrad" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
+                          <stop stop-color="#6366F1"/><stop offset="1" stop-color="#A78BFA"/>
+                        </linearGradient>
+                      </defs>
+                    </svg>
+                  </div>
+                </div>
+                <div>
+                  <h2 class="welcome-title">Welcome to Model-to-Gradio</h2>
+                  <p class="welcome-sub">Transform any Hugging Face model into a production-ready Gradio application.</p>
+                  <button class="btn btn-primary btn-lg" id="dashAnalyzeBtn">
+                    <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1110.89 3.476l4.817 4.817a1 1 0 01-1.414 1.414l-4.816-4.816A6 6 0 012 8z" clip-rule="evenodd"/></svg>
+                    Analyze a Model
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div class="dashboard-grid" id="dashGrid">
+              <!-- Quick Stats -->
+              <div class="stat-cards" id="statCards">
+                <div class="stat-card">
+                  <div class="stat-icon stat-icon--indigo">
+                    <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1110.89 3.476l4.817 4.817a1 1 0 01-1.414 1.414l-4.816-4.816A6 6 0 012 8z" clip-rule="evenodd"/></svg>
+                  </div>
+                  <div class="stat-body">
+                    <div class="stat-value" id="statAnalyzed">—</div>
+                    <div class="stat-label">Models Analyzed</div>
+                  </div>
+                </div>
+                <div class="stat-card">
+                  <div class="stat-icon stat-icon--violet">
+                    <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M12.316 3.051a1 1 0 01.633 1.265l-4 12a1 1 0 11-1.898-.632l4-12a1 1 0 011.265-.633zM5.707 6.293a1 1 0 010 1.414L3.414 10l2.293 2.293a1 1 0 11-1.414 1.414l-3-3a1 1 0 010-1.414l3-3a1 1 0 011.414 0zm8.586 0a1 1 0 011.414 0l3 3a1 1 0 010 1.414l-3 3a1 1 0 11-1.414-1.414L16.586 10l-2.293-2.293a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>
+                  </div>
+                  <div class="stat-body">
+                    <div class="stat-value" id="statGenerated">—</div>
+                    <div class="stat-label">Apps Generated</div>
+                  </div>
+                </div>
+                <div class="stat-card">
+                  <div class="stat-icon stat-icon--green">
+                    <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>
+                  </div>
+                  <div class="stat-body">
+                    <div class="stat-value" id="statDeployed">—</div>
+                    <div class="stat-label">Deployments</div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Recent Apps -->
+              <div class="dashboard-section">
+                <div class="section-header">
+                  <h3 class="section-title">Generated Apps</h3>
+                  <button class="btn btn-ghost btn-sm" data-page="apps">View all</button>
+                </div>
+                <div id="dashRecentApps" class="app-list-compact"></div>
+              </div>
+
+              <!-- Recent Activity -->
+              <div class="dashboard-section">
+                <div class="section-header">
+                  <h3 class="section-title">Recent Activity</h3>
+                  <button class="btn btn-ghost btn-sm" data-page="activity">View all</button>
+                </div>
+                <div id="dashActivity" class="activity-list-compact"></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ── MODEL ANALYZER ── -->
+        <section class="page" id="page-analyzer" data-page="analyzer" style="display:none">
+          <div class="page-inner">
+            <div class="analyzer-layout">
+              <div class="analyzer-input-section">
+                <div class="card">
+                  <div class="card-header">
+                    <h2 class="card-title">Analyze a Model</h2>
+                    <p class="card-desc">Paste a Hugging Face model URL or GitHub repository URL. Only metadata is inspected — no code is executed and no weights are downloaded.</p>
+                  </div>
+                  <div class="card-body">
+                    <div class="form-group">
+                      <label class="form-label" for="analyzerUrl">Model URL</label>
+                      <div class="input-with-btn">
+                        <input type="url" id="analyzerUrl" class="form-input"
+                          placeholder="https://huggingface.co/google/flan-t5-small"
+                          autocomplete="off" spellcheck="false" />
+                        <button class="btn btn-primary" id="analyzerBtn">
+                          <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1110.89 3.476l4.817 4.817a1 1 0 01-1.414 1.414l-4.816-4.816A6 6 0 012 8z" clip-rule="evenodd"/></svg>
+                          Analyze
+                        </button>
+                      </div>
+                      <p class="form-hint" id="analyzerUrlErr" style="display:none"></p>
+                    </div>
+                    <div class="example-urls">
+                      <span class="example-label">Examples:</span>
+                      <button class="example-chip" data-url="https://huggingface.co/google/flan-t5-small">flan-t5-small</button>
+                      <button class="example-chip" data-url="https://huggingface.co/openai/whisper-tiny">whisper-tiny</button>
+                      <button class="example-chip" data-url="https://huggingface.co/distilbert/distilbert-base-uncased-finetuned-sst-2-english">DistilBERT SST-2</button>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Analysis Progress -->
+                <div class="card analysis-progress-card" id="analyzerProgress" style="display:none">
+                  <div class="card-body">
+                    <div class="progress-header">
+                      <div class="progress-spinner"></div>
+                      <div>
+                        <div class="progress-title" id="analyzerProgressTitle">Analyzing…</div>
+                        <div class="progress-sub" id="analyzerProgressSub">Reading repository metadata</div>
+                      </div>
+                    </div>
+                    <div class="progress-bar-wrap">
+                      <div class="progress-bar" id="analyzerProgressBar" style="width:0%"></div>
+                    </div>
+                    <div class="progress-stages" id="analyzerStages"></div>
+                  </div>
+                </div>
+
+                <!-- Error state -->
+                <div class="card card-error" id="analyzerError" style="display:none">
+                  <div class="card-body">
+                    <div class="error-header">
+                      <svg class="error-icon" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/></svg>
+                      <span class="error-title">Analysis Failed</span>
+                    </div>
+                    <p class="error-msg" id="analyzerErrorMsg"></p>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Analysis Result -->
+              <div id="analyzerResult" class="analyzer-result-section" style="display:none">
+                <!-- Model Overview -->
+                <div class="card" id="analysisOverviewCard">
+                  <div class="card-header card-header-flex">
+                    <div>
+                      <div class="model-badge" id="analysisStatusBadge"></div>
+                      <h2 class="card-title" id="analysisModelName"></h2>
+                      <a class="model-link" id="analysisModelUrl" href="#" target="_blank" rel="noopener noreferrer"></a>
+                    </div>
+                    <div class="card-header-actions">
+                      <button class="btn btn-secondary btn-sm" id="goToInsightsBtn">View Insights</button>
+                      <button class="btn btn-primary btn-sm" id="goToGeneratorBtn">Generate App</button>
+                    </div>
+                  </div>
+                  <div class="card-body">
+                    <div class="meta-grid" id="analysisMetaGrid"></div>
+                    <div class="pipeline-status" id="analysisPipelineStatus" aria-live="polite"></div>
+                  </div>
+                </div>
+
+                <!-- Technical Details -->
+                <div class="card" id="analysisTechCard">
+                  <div class="card-header collapsible" data-target="analysisTechBody">
+                    <h3 class="card-title">Technical Details</h3>
+                    <svg class="collapse-arrow" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>
+                  </div>
+                  <div class="card-body" id="analysisTechBody">
+                    <div id="analysisTechContent"></div>
+                  </div>
+                </div>
+
+                <!-- Capabilities -->
+                <div class="card" id="analysisCapsCard">
+                  <div class="card-header">
+                    <h3 class="card-title">Detected Capabilities</h3>
+                  </div>
+                  <div class="card-body" id="analysisCapsBody"></div>
+                </div>
+
+                <!-- Hardware -->
+                <div class="card" id="analysisHwCard">
+                  <div class="card-header">
+                    <h3 class="card-title">Hardware Requirements</h3>
+                  </div>
+                  <div class="card-body" id="analysisHwBody"></div>
+                </div>
+
+                <!-- Warnings -->
+                <div class="card card-warn" id="analysisWarnCard" style="display:none">
+                  <div class="card-header">
+                    <h3 class="card-title">Warnings & Uncertainties</h3>
+                  </div>
+                  <div class="card-body" id="analysisWarnBody"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ── MODEL INSIGHTS ── -->
+        <section class="page" id="page-insights" data-page="insights" style="display:none">
+          <div class="page-inner">
+            <div id="insightsEmpty" class="empty-state">
+              <div class="empty-icon">
+                <svg viewBox="0 0 64 64" fill="none"><circle cx="32" cy="32" r="28" stroke="#27344D" stroke-width="2"/><path d="M22 32h8l4-8 4 16 4-8h8" stroke="#6366F1" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </div>
+              <h3 class="empty-title">No model selected</h3>
+              <p class="empty-sub">Analyze a model first to view insights.</p>
+              <button class="btn btn-primary" data-page="analyzer">Analyze a Model</button>
+            </div>
+            <div id="insightsContent" style="display:none">
+              <div class="insights-header">
+                <div>
+                  <h2 class="page-section-title" id="insightsModelName"></h2>
+                  <p class="page-section-sub" id="insightsModelTask"></p>
+                </div>
+                <button class="btn btn-primary" id="insightsContinueBtn">Continue to Generator →</button>
+              </div>
+              <div class="insights-grid" id="insightsGrid"></div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ── APP GENERATOR ── -->
+        <section class="page" id="page-generator" data-page="generator" style="display:none">
+          <div class="page-inner">
+            <div id="generatorEmpty" class="empty-state">
+              <div class="empty-icon">
+                <svg viewBox="0 0 64 64" fill="none"><rect x="8" y="16" width="48" height="36" rx="4" stroke="#27344D" stroke-width="2"/><path d="M20 28l6 6-6 6M34 40h10" stroke="#6366F1" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </div>
+              <h3 class="empty-title">No model selected</h3>
+              <p class="empty-sub">Analyze a model first to generate an application.</p>
+              <button class="btn btn-primary" data-page="analyzer">Analyze a Model</button>
+            </div>
+            <div id="generatorContent" style="display:none">
+              <div class="generator-layout">
+                <div class="generator-sidebar">
+                  <div class="card">
+                    <div class="card-header">
+                      <h3 class="card-title">Selected Model</h3>
+                    </div>
+                    <div class="card-body">
+                      <div class="selected-model-info" id="generatorModelInfo"></div>
+                    </div>
+                  </div>
+                  <div class="card">
+                    <div class="card-header">
+                      <h3 class="card-title">Generation Options</h3>
+                    </div>
+                    <div class="card-body">
+                      <div class="gen-options" id="generatorOptions">
+                        <div class="form-group">
+                          <label class="form-label">Output directory</label>
+                          <input type="text" class="form-input" value="output/" readonly disabled />
+                        </div>
+                      </div>
+                      <button class="btn btn-primary btn-block" id="generatorBtn" style="margin-top:1rem">
+                        <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M12.316 3.051a1 1 0 01.633 1.265l-4 12a1 1 0 11-1.898-.632l4-12a1 1 0 011.265-.633zM5.707 6.293a1 1 0 010 1.414L3.414 10l2.293 2.293a1 1 0 11-1.414 1.414l-3-3a1 1 0 010-1.414l3-3a1 1 0 011.414 0zm8.586 0a1 1 0 011.414 0l3 3a1 1 0 010 1.414l-3 3a1 1 0 11-1.414-1.414L16.586 10l-2.293-2.293a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>
+                        Generate Application
+                      </button>
+                    </div>
+                  </div>
+                </div>
+                <div class="generator-main">
+                  <!-- Progress -->
+                  <div class="card generation-progress-card" id="generationProgress" style="display:none">
+                    <div class="card-body">
+                      <div class="progress-header">
+                        <div class="progress-spinner"></div>
+                        <div>
+                          <div class="progress-title">Generating Gradio application…</div>
+                          <div class="progress-sub" id="generationProgressSub">Preparing generation request</div>
+                        </div>
+                      </div>
+                      <div class="progress-bar-wrap"><div class="progress-bar indeterminate" id="generationProgressBar"></div></div>
+                      <div class="gen-stages" id="generationStages"></div>
+                    </div>
+                  </div>
+
+                  <!-- Success -->
+                  <div class="card card-success" id="generationSuccess" style="display:none">
+                    <div class="card-body">
+                      <div class="success-header">
+                        <svg class="success-icon" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/></svg>
+                        <div>
+                          <h3 class="success-title">Application Generated Successfully</h3>
+                          <p class="success-sub" id="generationSuccessMsg"></p>
+                        </div>
+                      </div>
+                      <div class="generated-files" id="generatedFilesList"></div>
+                      <div class="success-actions">
+                        <button class="btn btn-primary" id="viewGeneratedAppBtn">View in Generated Apps →</button>
+                        <button class="btn btn-secondary" id="goToDeployBtn">Deploy →</button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- Error -->
+                  <div class="card card-error" id="generationError" style="display:none">
+                    <div class="card-body">
+                      <div class="error-header">
+                        <svg class="error-icon" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/></svg>
+                        <span class="error-title">Generation Failed</span>
+                      </div>
+                      <p class="error-msg" id="generationErrorMsg"></p>
+                    </div>
+                  </div>
+
+                  <!-- Capabilities display -->
+                  <div class="card" id="generatorCapsCard">
+                    <div class="card-header">
+                      <h3 class="card-title">Verified Capabilities to Generate</h3>
+                    </div>
+                    <div class="card-body" id="generatorCapsList"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ── GENERATED APPS ── -->
+        <section class="page" id="page-apps" data-page="apps" style="display:none">
+          <div class="page-inner">
+            <div class="apps-layout" id="appsLayout">
+              <!-- App list -->
+              <div class="apps-list-panel">
+                <div class="apps-list-header">
+                  <div class="search-wrap">
+                    <svg class="search-icon" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1110.89 3.476l4.817 4.817a1 1 0 01-1.414 1.414l-4.816-4.816A6 6 0 012 8z" clip-rule="evenodd"/></svg>
+                    <input type="search" class="search-input" id="appsSearch" placeholder="Search apps…" />
+                  </div>
+                  <button class="btn btn-icon" id="appsRefreshBtn" title="Refresh">
+                    <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clip-rule="evenodd"/></svg>
+                  </button>
+                </div>
+                <div id="appsList" class="apps-list">
+                  <div class="loading-state"><div class="spinner"></div><span>Loading apps…</span></div>
+                </div>
+              </div>
+
+              <!-- App detail -->
+              <div class="apps-detail-panel" id="appsDetail">
+                <div class="apps-detail-empty" id="appsDetailEmpty">
+                  <div class="empty-icon">
+                    <svg viewBox="0 0 64 64" fill="none"><rect x="12" y="8" width="40" height="48" rx="4" stroke="#27344D" stroke-width="2"/><path d="M20 24h24M20 32h24M20 40h16" stroke="#6366F1" stroke-width="2" stroke-linecap="round"/></svg>
+                  </div>
+                  <p>Select an app to view details</p>
+                </div>
+                <div id="appsDetailContent" style="display:none"></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ── DEPLOYMENT ── -->
+        <section class="page" id="page-deployment" data-page="deployment" style="display:none">
+          <div class="page-inner">
+            <div id="deploymentEmpty" class="empty-state">
+              <div class="empty-icon">
+                <svg viewBox="0 0 64 64" fill="none"><path d="M32 12L52 42H12L32 12z" stroke="#27344D" stroke-width="2" stroke-linejoin="round"/><path d="M32 32v10" stroke="#6366F1" stroke-width="2" stroke-linecap="round"/></svg>
+              </div>
+              <h3 class="empty-title">No app selected for deployment</h3>
+              <p class="empty-sub">Generate an app first, then deploy it here.</p>
+              <button class="btn btn-primary" data-page="apps">View Generated Apps</button>
+            </div>
+            <div id="deploymentContent" style="display:none">
+              <div class="deployment-header">
+                <div>
+                  <h2 class="page-section-title" id="deployModelName"></h2>
+                  <p class="page-section-sub" id="deployModelSlug"></p>
+                </div>
+                <button class="btn btn-ghost btn-sm" data-page="apps">← Back to Apps</button>
+              </div>
+              <div class="deployment-options">
+                <!-- Local Deployment -->
+                <div class="deploy-card" id="localDeployCard">
+                  <div class="deploy-card-header">
+                    <div class="deploy-icon deploy-icon--local">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+                    </div>
+                    <div>
+                      <h3 class="deploy-title">Run on My System</h3>
+                      <p class="deploy-sub">Launch locally using a virtual environment</p>
+                    </div>
+                    <div class="deploy-status-badge" id="localStatusBadge">
+                      <span class="status-dot status-dot--idle"></span> Idle
+                    </div>
+                  </div>
+                  <div class="deploy-card-body">
+                    <div class="deploy-info-grid" id="localInfoGrid"></div>
+                    <div class="deploy-progress" id="localProgress" style="display:none">
+                      <div class="deploy-stage-list" id="localStageList"></div>
+                      <div class="progress-bar-wrap"><div class="progress-bar" id="localProgressBar" style="width:0%"></div></div>
+                    </div>
+                    <div class="deploy-url-card" id="localUrlCard" style="display:none">
+                      <div class="url-label">Local URL</div>
+                      <a class="url-link" id="localUrl" href="#" target="_blank" rel="noopener noreferrer"></a>
+                      <button class="btn btn-ghost btn-sm" id="localCopyUrl">Copy</button>
+                    </div>
+                    <div class="deploy-log" id="localLog" style="display:none">
+                      <div class="deploy-log-header">
+                        <span>Logs</span>
+                        <button class="btn btn-ghost btn-xs" id="localLogClear">Clear</button>
+                      </div>
+                      <div class="deploy-log-body" id="localLogBody"></div>
+                    </div>
+                    <div class="deploy-actions">
+                      <button class="btn btn-primary" id="localStartBtn">
+                        <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clip-rule="evenodd"/></svg>
+                        Start
+                      </button>
+                      <button class="btn btn-danger" id="localStopBtn" style="display:none">
+                        <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8 7a1 1 0 00-1 1v4a1 1 0 001 1h4a1 1 0 001-1V8a1 1 0 00-1-1H8z" clip-rule="evenodd"/></svg>
+                        Stop
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Colab Deployment -->
+                <div class="deploy-card" id="colabDeployCard">
+                  <div class="deploy-card-header">
+                    <div class="deploy-icon deploy-icon--colab">
+                      <svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/><path d="M8 12l4-4 4 4M12 8v8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                    </div>
+                    <div>
+                      <h3 class="deploy-title">Run on Google Colab</h3>
+                      <p class="deploy-sub">Deploy to a Colab runtime for GPU acceleration</p>
+                    </div>
+                    <div class="deploy-status-badge" id="colabStatusBadge">
+                      <span class="status-dot status-dot--idle"></span> Idle
+                    </div>
+                  </div>
+                  <div class="deploy-card-body">
+                    <div class="colab-connection" id="colabConnection">
+                      <div class="conn-row">
+                        <span class="conn-dot" id="colabConnDot"></span>
+                        <span id="colabConnText">Not checked</span>
+                        <button class="btn btn-ghost btn-sm" id="colabCheckBtn">Check Connection</button>
+                      </div>
+                    </div>
+                    <div class="colab-config" id="colabConfig">
+                      <div class="form-group">
+                        <label class="form-label">GPU Runtime</label>
+                        <select class="form-select" id="colabGpuSelect">
+                          <option value="">CPU (no GPU)</option>
+                          <option value="T4">T4 (recommended)</option>
+                          <option value="L4">L4</option>
+                          <option value="A100">A100</option>
+                          <option value="V100">V100</option>
+                        </select>
+                      </div>
+                      <details class="deploy-advanced">
+                        <summary>Password protect public link (optional)</summary>
+                        <div class="form-group">
+                          <label class="form-label">Username</label>
+                          <input type="text" class="form-input" id="colabAuthUser" placeholder="username" autocomplete="new-password" />
+                        </div>
+                        <div class="form-group">
+                          <label class="form-label">Password (8-128 chars)</label>
+                          <input type="password" class="form-input" id="colabAuthPw" placeholder="password" autocomplete="new-password" />
+                        </div>
+                      </details>
+                    </div>
+                    <div class="deploy-progress" id="colabProgress" style="display:none">
+                      <div class="deploy-stage-list" id="colabStageList"></div>
+                      <div class="progress-bar-wrap"><div class="progress-bar" id="colabProgressBar" style="width:0%"></div></div>
+                      <div class="colab-hardware-info" id="colabHwInfo" style="display:none"></div>
+                    </div>
+                    <div class="deploy-url-card" id="colabUrlCard" style="display:none">
+                      <div class="url-label">Public Gradio URL</div>
+                      <a class="url-link" id="colabUrl" href="#" target="_blank" rel="noopener noreferrer"></a>
+                      <button class="btn btn-ghost btn-sm" id="colabCopyUrl">Copy</button>
+                    </div>
+                    <div class="deploy-log" id="colabLog" style="display:none">
+                      <div class="deploy-log-header">
+                        <span>Deployment Logs</span>
+                        <button class="btn btn-ghost btn-xs" id="colabLogRefresh">Refresh</button>
+                      </div>
+                      <div class="deploy-log-body" id="colabLogBody"></div>
+                    </div>
+                    <div class="deploy-actions">
+                      <button class="btn btn-primary" id="colabStartBtn">
+                        <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clip-rule="evenodd"/></svg>
+                        Launch on Colab
+                      </button>
+                      <button class="btn btn-danger" id="colabStopBtn" style="display:none">
+                        <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8 7a1 1 0 00-1 1v4a1 1 0 001 1h4a1 1 0 001-1V8a1 1 0 00-1-1H8z" clip-rule="evenodd"/></svg>
+                        Stop Runtime
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ── ACTIVITY & LOGS ── -->
+        <section class="page" id="page-activity" data-page="activity" style="display:none">
+          <div class="page-inner">
+            <div class="activity-toolbar">
+              <div class="filter-chips" id="activityFilters">
+                <button class="filter-chip active" data-filter="all">All</button>
+                <button class="filter-chip" data-filter="analysis">Analysis</button>
+                <button class="filter-chip" data-filter="generation">Generation</button>
+                <button class="filter-chip" data-filter="deployment">Deployment</button>
+                <button class="filter-chip" data-filter="error">Errors</button>
+              </div>
+              <button class="btn btn-ghost btn-sm" id="activityRefreshBtn">
+                <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clip-rule="evenodd"/></svg>
+                Refresh
+              </button>
+            </div>
+            <div id="activityList" class="activity-full-list">
+              <div class="loading-state"><div class="spinner"></div><span>Loading activity…</span></div>
+            </div>
+          </div>
+        </section>
+
+      </main>
+    </div>
+  </div>
+
+  <!-- Notification Toast Container -->
+  <div id="notifContainer" class="notif-container" aria-live="polite" aria-atomic="false"></div>
+
+  <!-- Notification Panel -->
+  <div id="notifPanel" class="notif-panel" style="display:none" role="dialog" aria-label="Notifications">
+    <div class="notif-panel-header">
+      <h3>Notifications</h3>
+      <button id="notifPanelClose" class="btn btn-icon btn-sm" aria-label="Close">
+        <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>
+      </button>
+    </div>
+    <div id="notifPanelList" class="notif-panel-list"></div>
+  </div>
+
+  <script type="module" src="script.js"></script>
+</body>
+</html>

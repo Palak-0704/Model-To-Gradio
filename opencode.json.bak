@@ -1,0 +1,15 @@
+﻿{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "rea": {
+      "type": "local",
+      "command": [
+        "cmd.exe",
+        "/c",
+        "C:\\Users\\Palak\\AppData\\Roaming\\npm\\rea.cmd",
+        "--mcp"
+      ],
+      "enabled": true
+    }
+  }
+}

@@ -1,0 +1,300 @@
+timestamp=2026-10-30T08:51:52.310Z level=INFO run=6eb1e28e message=loading path="C:\\Users\\Palak\\.config\\opencode\\config.json"
+timestamp=2026-10-30T08:51:52.311Z level=INFO run=6eb1e28e message=loading path="C:\\Users\\Palak\\.config\\opencode\\opencode.json"
+timestamp=2026-10-30T08:51:52.311Z level=INFO run=6eb1e28e message=loading path="C:\\Users\\Palak\\.config\\opencode\\opencode.jsonc"
+timestamp=2026-10-30T08:51:52.343Z level=INFO run=6eb1e28e message="all LSPs are disabled"
+timestamp=2026-10-30T08:51:52.344Z level=INFO run=6eb1e28e message="all formatters are disabled"
+timestamp=2026-10-30T08:51:52.344Z level=INFO run=6eb1e28e message=init
+timestamp=2026-10-30T08:51:54.570Z level=INFO run=6eb1e28e message="watcher backend" directory="C:\\Windows\\System32" platform=win32 backend=windows
+timestamp=2026-10-30T08:51:54.594Z level=INFO run=6eb1e28e message="project copy refresh started" projectID=global
+timestamp=2026-10-30T08:51:54.597Z level=INFO run=6eb1e28e message="project copy refresh done" projectID=global updated=[] removed=[]
+timestamp=2026-10-30T08:51:54.730Z level=INFO run=6eb1e28e message="booting location services" directory="C:\\Windows\\System32" workspaceID=undefined
+timestamp=2026-10-30T08:52:03.721Z level=WARN run=6eb1e28e message="duplicate skill name" name=developing-with-streamlit existing="C:\\Users\\Palak\\.agents\\skills\\developing-with-streamlit\\SKILL.md" duplicate="C:\\Users\\Palak\\.claude\\skills\\developing-with-streamlit\\SKILL.md"
+timestamp=2026-10-30T08:52:03.721Z level=INFO run=6eb1e28e message=init count=3
+timestamp=2026-10-30T08:55:03.595Z level=INFO run=6195d9b4 message="creating instance" directory="C:\\Users\\Palak"
+timestamp=2026-10-30T08:55:03.597Z level=INFO run=6195d9b4 message=fromDirectory directory="C:\\Users\\Palak"
+timestamp=2026-10-30T08:55:03.611Z level=INFO run=6195d9b4 message=bootstrapping directory="C:\\Users\\Palak"
+timestamp=2026-10-30T08:55:03.618Z level=INFO run=6195d9b4 message=loading path="C:\\Users\\Palak\\.config\\opencode\\config.json"
+timestamp=2026-10-30T08:55:03.618Z level=INFO run=6195d9b4 message=loading path="C:\\Users\\Palak\\.config\\opencode\\opencode.json"
+timestamp=2026-10-30T08:55:03.619Z level=INFO run=6195d9b4 message=loading path="C:\\Users\\Palak\\.config\\opencode\\opencode.jsonc"
+timestamp=2026-10-30T08:55:03.655Z level=INFO run=6195d9b4 message="all LSPs are disabled"
+timestamp=2026-10-30T08:55:03.655Z level=INFO run=6195d9b4 message="all formatters are disabled"
+timestamp=2026-10-30T08:55:03.655Z level=INFO run=6195d9b4 message=init
+timestamp=2026-10-30T08:55:05.162Z level=INFO run=6195d9b4 message="watcher backend" directory="C:\\Users\\Palak" platform=win32 backend=windows
+timestamp=2026-10-30T08:55:05.180Z level=INFO run=6195d9b4 message="project copy refresh started" projectID=global
+timestamp=2026-10-30T08:55:05.184Z level=INFO run=6195d9b4 message="project copy refresh done" projectID=global updated=[] removed=[]
+timestamp=2026-10-30T08:55:05.512Z level=INFO run=6195d9b4 message="booting location services" directory="C:\\Users\\Palak" workspaceID=undefined
+timestamp=2026-10-30T08:55:14.365Z level=WARN run=6195d9b4 message="duplicate skill name" name=developing-with-streamlit existing="C:\\Users\\Palak\\.claude\\skills\\developing-with-streamlit\\SKILL.md" duplicate="C:\\Users\\Palak\\.agents\\skills\\developing-with-streamlit\\SKILL.md"
+timestamp=2026-10-30T08:55:14.365Z level=INFO run=6195d9b4 message=init count=3
+timestamp=2026-10-30T08:58:22.157Z level=INFO run=6195d9b4 message=created id=ses_e73f7ebb3ffezugfuWguUAaBO6 slug=silent-engine version=1.19.5 projectID=global directory="C:\\Users\\Palak" path=Users/Palak workspaceID=undefined parentID=undefined title="New session - 2026-10-30T08:58:22.156Z" agent=build model.id=glm-5.3-flash-free model.providerID=opencode metadata=undefined permission=undefined cost=0 tokens.input=0 tokens.output=0 tokens.reasoning=0 tokens.cache.read=0 tokens.cache.write=0 time.created=1793350702156 time.updated=1793350702156
+timestamp=2026-10-30T08:58:22.222Z level=INFO run=6195d9b4 message=loop session.id=ses_e73f7ebb3ffezugfuWguUAaBO6 step=0
+timestamp=2026-10-30T08:58:22.256Z level=INFO run=6195d9b4 message="shell tool using shell" shell="C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.EXE"
+timestamp=2026-10-30T08:58:22.300Z level=INFO run=6195d9b4 message=stream providerID=opencode modelID=gpt-5.4-nano session.id=ses_e73f7ebb3ffezugfuWguUAaBO6 small=true agent=title mode=primary
+timestamp=2026-10-30T08:58:22.328Z level=INFO run=6195d9b4 message="llm runtime selected" llm.runtime=ai-sdk llm.provider=opencode llm.model=gpt-5.4-nano
+timestamp=2026-10-30T08:58:22.361Z level=INFO run=6195d9b4 message="watcher backend" directory="C:\\Users\\Palak" platform=win32 backend=windows
+timestamp=2026-10-30T08:58:22.365Z level=INFO run=6195d9b4 message="project copy refresh started" projectID=global
+timestamp=2026-10-30T08:58:22.366Z level=INFO run=6195d9b4 message="project copy refresh done" projectID=global updated=[] removed=[]
+timestamp=2026-10-30T08:58:22.740Z level=INFO run=6195d9b4 message="booting location services" directory="C:\\Users\\Palak" workspaceID=undefined
+timestamp=2026-10-30T08:58:23.235Z level=INFO run=6195d9b4 message=process session.id=ses_e73f7ebb3ffezugfuWguUAaBO6 messageID=msg_18c081492001AU3EWcxsykHcjB
+timestamp=2026-10-30T08:58:23.236Z level=INFO run=6195d9b4 message=stream providerID=opencode modelID=glm-5.3-flash-free session.id=ses_e73f7ebb3ffezugfuWguUAaBO6 small=false agent=build mode=primary
+timestamp=2026-10-30T08:58:23.243Z level=INFO run=6195d9b4 message="llm runtime selected" llm.runtime=ai-sdk llm.provider=opencode llm.model=glm-5.3-flash-free
+timestamp=2026-10-30T08:58:23.322Z level=ERROR run=6195d9b4 message="stream error" providerID=opencode modelID=gpt-5.4-nano session.id=ses_e73f7ebb3ffezugfuWguUAaBO6 small=true agent=title mode=primary error.error="AI_APICallError: Upstream request failed: Insufficient account funds"
+timestamp=2026-10-30T08:59:00.987Z level=INFO run=6195d9b4 message=loop session.id=ses_e73f7ebb3ffezugfuWguUAaBO6 step=1
+timestamp=2026-10-30T08:59:00.988Z level=INFO run=6195d9b4 message="exiting loop" session.id=ses_e73f7ebb3ffezugfuWguUAaBO6
+timestamp=2026-10-30T09:09:20.755Z level=INFO run=50a8eeeb message="creating instance" directory="D:\\Model To Gradio"
+timestamp=2026-10-30T09:09:20.756Z level=INFO run=50a8eeeb message=fromDirectory directory="D:\\Model To Gradio"
+timestamp=2026-10-30T09:09:20.769Z level=INFO run=50a8eeeb message=bootstrapping directory="D:\\Model To Gradio"
+timestamp=2026-10-30T09:09:20.775Z level=INFO run=50a8eeeb message=loading path="C:\\Users\\Palak\\.config\\opencode\\config.json"
+timestamp=2026-10-30T09:09:20.775Z level=INFO run=50a8eeeb message=loading path="C:\\Users\\Palak\\.config\\opencode\\opencode.json"
+timestamp=2026-10-30T09:09:20.776Z level=INFO run=50a8eeeb message=loading path="C:\\Users\\Palak\\.config\\opencode\\opencode.jsonc"
+timestamp=2026-10-30T09:09:20.782Z level=INFO run=50a8eeeb message=loading path="D:\\Model To Gradio\\opencode.json"
+timestamp=2026-10-30T09:09:20.813Z level=INFO run=50a8eeeb message="all LSPs are disabled"
+timestamp=2026-10-30T09:09:20.813Z level=INFO run=50a8eeeb message="all formatters are disabled"
+timestamp=2026-10-30T09:09:20.813Z level=INFO run=50a8eeeb message=init
+timestamp=2026-10-30T09:09:22.323Z level=INFO run=50a8eeeb message="watcher backend" directory="D:\\Model To Gradio" platform=win32 backend=windows
+timestamp=2026-10-30T09:09:22.350Z level=INFO run=50a8eeeb message="project copy refresh started" projectID=global
+timestamp=2026-10-30T09:09:22.353Z level=INFO run=50a8eeeb message="project copy refresh done" projectID=global updated=[] removed=[]
+timestamp=2026-10-30T09:09:22.381Z level=INFO run=50a8eeeb message="booting location services" directory="D:\\Model To Gradio" workspaceID=undefined
+timestamp=2026-10-30T09:09:30.663Z level=WARN run=50a8eeeb message="duplicate skill name" name=developing-with-streamlit existing="C:\\Users\\Palak\\.agents\\skills\\developing-with-streamlit\\SKILL.md" duplicate="C:\\Users\\Palak\\.claude\\skills\\developing-with-streamlit\\SKILL.md"
+timestamp=2026-10-30T09:09:30.664Z level=INFO run=50a8eeeb message=init count=3
+timestamp=2026-10-30T09:09:58.747Z level=INFO run=50a8eeeb message=created id=ses_e73ed4aa4ffe2VUwImNN9T8y9o slug=curious-falcon version=1.19.5 projectID=global directory="D:\\Model To Gradio" path="Model To Gradio" workspaceID=undefined parentID=undefined title="New session - 2026-10-30T09:09:58.747Z" agent=build model.id=glm-5.3-flash-free model.providerID=opencode metadata=undefined permission=undefined cost=0 tokens.input=0 tokens.output=0 tokens.reasoning=0 tokens.cache.read=0 tokens.cache.write=0 time.created=1793351398747 time.updated=1793351398747
+timestamp=2026-10-30T09:09:58.814Z level=INFO run=50a8eeeb message=loop session.id=ses_e73ed4aa4ffe2VUwImNN9T8y9o step=0
+timestamp=2026-10-30T09:09:58.845Z level=INFO run=50a8eeeb message="shell tool using shell" shell="C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.EXE"
+timestamp=2026-10-30T09:09:58.877Z level=INFO run=50a8eeeb message=stream providerID=opencode modelID=gpt-5.4-nano session.id=ses_e73ed4aa4ffe2VUwImNN9T8y9o small=true agent=title mode=primary
+timestamp=2026-10-30T09:09:58.901Z level=INFO run=50a8eeeb message="llm runtime selected" llm.runtime=ai-sdk llm.provider=opencode llm.model=gpt-5.4-nano
+timestamp=2026-10-30T09:09:58.932Z level=INFO run=50a8eeeb message="watcher backend" directory="D:\\Model To Gradio" platform=win32 backend=windows
+timestamp=2026-10-30T09:09:58.936Z level=INFO run=50a8eeeb message="project copy refresh started" projectID=global
+timestamp=2026-10-30T09:09:58.937Z level=INFO run=50a8eeeb message="project copy refresh done" projectID=global updated=[] removed=[]
+timestamp=2026-10-30T09:09:59.081Z level=INFO run=50a8eeeb message="booting location services" directory="D:\\Model To Gradio" workspaceID=undefined
+timestamp=2026-10-30T09:09:59.713Z level=INFO run=50a8eeeb message=process session.id=ses_e73ed4aa4ffe2VUwImNN9T8y9o messageID=msg_18c12b5a1001yiETirvUVEmKX5
+timestamp=2026-10-30T09:09:59.715Z level=INFO run=50a8eeeb message=stream providerID=opencode modelID=glm-5.3-flash-free session.id=ses_e73ed4aa4ffe2VUwImNN9T8y9o small=false agent=build mode=primary
+timestamp=2026-10-30T09:09:59.726Z level=INFO run=50a8eeeb message="llm runtime selected" llm.runtime=ai-sdk llm.provider=opencode llm.model=glm-5.3-flash-free
+timestamp=2026-10-30T09:09:59.921Z level=ERROR run=50a8eeeb message="stream error" providerID=opencode modelID=gpt-5.4-nano session.id=ses_e73ed4aa4ffe2VUwImNN9T8y9o small=true agent=title mode=primary error.error="AI_APICallError: Upstream request failed: Insufficient account funds"
+timestamp=2026-10-30T09:10:11.691Z level=INFO run=50a8eeeb message=evaluated permission=rea_inspect_byte_entropy pattern=* action.permission=* action.action=allow action.pattern=*
+timestamp=2026-10-30T09:10:11.764Z level=INFO run=50a8eeeb message=evaluated permission=rea_binary_session pattern=* action.permission=* action.action=allow action.pattern=*
+timestamp=2026-10-30T09:10:11.904Z level=INFO run=50a8eeeb message=loop session.id=ses_e73ed4aa4ffe2VUwImNN9T8y9o step=1
+timestamp=2026-10-30T09:10:11.920Z level=INFO run=50a8eeeb message=process session.id=ses_e73ed4aa4ffe2VUwImNN9T8y9o messageID=msg_18c12e8c20015uEiOo1DMiMm6L
+timestamp=2026-10-30T09:10:11.921Z level=INFO run=50a8eeeb message=stream providerID=opencode modelID=glm-5.3-flash-free session.id=ses_e73ed4aa4ffe2VUwImNN9T8y9o small=false agent=build mode=primary
+timestamp=2026-10-30T09:10:11.923Z level=INFO run=50a8eeeb message="llm runtime selected" llm.runtime=ai-sdk llm.provider=opencode llm.model=glm-5.3-flash-free
+timestamp=2026-10-30T09:10:17.138Z level=INFO run=50a8eeeb message=evaluated permission=external_directory pattern="C:\\Users\\Palak\\AppData\\Roaming\\npm\\*" action.permission=external_directory action.pattern=* action.action=ask
+timestamp=2026-10-30T09:10:17.138Z level=INFO run=50a8eeeb message=asking id=per_18c12fd32001Ro5OsXpOVgRkIh permission=external_directory patterns="[\"C:\\\\Users\\\\Palak\\\\AppData\\\\Roaming\\\\npm\\\\*\"]"
+timestamp=2026-10-30T09:11:55.579Z level=INFO run=50a8eeeb message=evaluated permission=read pattern="C:\\Users\\Palak\\AppData\\Roaming\\npm\\rea.cmd" action.permission=read action.pattern=* action.action=allow
+timestamp=2026-10-30T09:11:55.640Z level=INFO run=50a8eeeb message=loop session.id=ses_e73ed4aa4ffe2VUwImNN9T8y9o step=2
+timestamp=2026-10-30T09:11:55.648Z level=INFO run=50a8eeeb message="touching file" file="C:\\Users\\Palak\\AppData\\Roaming\\npm\\rea.cmd"
+timestamp=2026-10-30T09:11:55.661Z level=INFO run=50a8eeeb message=process session.id=ses_e73ed4aa4ffe2VUwImNN9T8y9o messageID=msg_18c147dfa0014ZD5JHWQ7GQtG1
+timestamp=2026-10-30T09:11:55.661Z level=INFO run=50a8eeeb message=stream providerID=opencode modelID=glm-5.3-flash-free session.id=ses_e73ed4aa4ffe2VUwImNN9T8y9o small=false agent=build mode=primary
+timestamp=2026-10-30T09:11:55.675Z level=INFO run=50a8eeeb message="llm runtime selected" llm.runtime=ai-sdk llm.provider=opencode llm.model=glm-5.3-flash-free
+timestamp=2026-10-30T09:12:03.247Z level=INFO run=50a8eeeb message=loop session.id=ses_e73ed4aa4ffe2VUwImNN9T8y9o step=3
+timestamp=2026-10-30T09:12:03.248Z level=INFO run=50a8eeeb message="exiting loop" session.id=ses_e73ed4aa4ffe2VUwImNN9T8y9o
+timestamp=2026-10-30T10:27:50.071Z level=INFO run=50a8eeeb message="watcher backend" directory="D:\\Model To Gradio" platform=win32 backend=windows
+timestamp=2026-10-30T10:27:50.205Z level=INFO run=50a8eeeb message="project copy refresh started" projectID=global
+timestamp=2026-10-30T10:27:50.231Z level=INFO run=50a8eeeb message="project copy refresh done" projectID=global updated=[] removed=[]
+timestamp=2026-10-30T10:27:50.340Z level=INFO run=50a8eeeb message="booting location services" directory="D:\\Model To Gradio" workspaceID=undefined
+timestamp=2026-10-30T10:34:59.393Z level=INFO run=6195d9b4 message="disposing all instances"
+timestamp=2026-10-30T10:34:59.397Z level=INFO run=6195d9b4 message="disposing instance" directory="C:\\Users\\Palak"
+timestamp=2026-10-30T10:38:06.803Z level=INFO run=3eee8d67 message="creating instance" directory="D:\\Model To Gradio"
+timestamp=2026-10-30T10:38:06.805Z level=INFO run=3eee8d67 message=fromDirectory directory="D:\\Model To Gradio"
+timestamp=2026-10-30T10:38:06.836Z level=INFO run=3eee8d67 message=bootstrapping directory="D:\\Model To Gradio"
+timestamp=2026-10-30T10:38:06.844Z level=INFO run=3eee8d67 message=loading path="C:\\Users\\Palak\\.config\\opencode\\config.json"
+timestamp=2026-10-30T10:38:06.846Z level=INFO run=3eee8d67 message=loading path="C:\\Users\\Palak\\.config\\opencode\\opencode.json"
+timestamp=2026-10-30T10:38:06.846Z level=INFO run=3eee8d67 message=loading path="C:\\Users\\Palak\\.config\\opencode\\opencode.jsonc"
+timestamp=2026-10-30T10:38:06.857Z level=INFO run=3eee8d67 message=loading path="D:\\Model To Gradio\\opencode.json"
+timestamp=2026-10-30T10:38:06.980Z level=INFO run=3eee8d67 message="all LSPs are disabled"
+timestamp=2026-10-30T10:38:06.981Z level=INFO run=3eee8d67 message="all formatters are disabled"
+timestamp=2026-10-30T10:38:06.981Z level=INFO run=3eee8d67 message=init
+timestamp=2026-10-30T10:42:18.233Z level=INFO run=01077a50 message="creating instance" directory="D:\\Model To Gradio"
+timestamp=2026-10-30T10:42:18.238Z level=INFO run=01077a50 message=fromDirectory directory="D:\\Model To Gradio"
+timestamp=2026-10-30T10:42:18.315Z level=INFO run=01077a50 message=bootstrapping directory="D:\\Model To Gradio"
+timestamp=2026-10-30T10:42:18.334Z level=INFO run=01077a50 message=loading path="C:\\Users\\Palak\\.config\\opencode\\config.json"
+timestamp=2026-10-30T10:42:18.337Z level=INFO run=01077a50 message=loading path="C:\\Users\\Palak\\.config\\opencode\\opencode.json"
+timestamp=2026-10-30T10:42:18.338Z level=INFO run=01077a50 message=loading path="C:\\Users\\Palak\\.config\\opencode\\opencode.jsonc"
+timestamp=2026-10-30T10:42:18.360Z level=INFO run=01077a50 message=loading path="D:\\Model To Gradio\\opencode.json"
+timestamp=2026-10-30T10:42:18.582Z level=INFO run=01077a50 message="all LSPs are disabled"
+timestamp=2026-10-30T10:42:18.584Z level=INFO run=01077a50 message="all formatters are disabled"
+timestamp=2026-10-30T10:42:18.584Z level=INFO run=01077a50 message=init
+timestamp=2026-10-30T10:42:18.874Z level=INFO run=01077a50 message=created id=ses_e7398c186ffenvQoimwSO2wUsJ slug=happy-island version=1.19.5 projectID=global directory="D:\\Model To Gradio" path="Model To Gradio" workspaceID=undefined parentID=undefined title="New session - 2026-10-30T10:42:18.874Z" agent=undefined model=undefined metadata=undefined permission="[{\"permission\":\"question\",\"pattern\":\"*\",\"action\":\"deny\"},{\"permission\":\"plan_enter\",\"pattern\":\"*\",\"action\":\"deny\"},{\"permission\":\"plan_exit\",\"pattern\":\"*\",\"action\":\"deny\"}]" cost=0 tokens.input=0 tokens.output=0 tokens.reasoning=0 tokens.cache.read=0 tokens.cache.write=0 time.created=1793356938874 time.updated=1793356938874
+timestamp=2026-10-30T10:42:18.908Z level=INFO run=01077a50 message="event connected"
+timestamp=2026-10-30T10:42:19.004Z level=INFO run=01077a50 message=file mime=text/plain
+timestamp=2026-10-30T10:42:19.052Z level=INFO run=01077a50 message="shell tool using shell" shell="C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.EXE"
+timestamp=2026-10-30T10:42:20.232Z level=INFO run=01077a50 message="touching file" file="D:\\Model To Gradio\\.m2g\\opencode\\req_wb5ebh87\\request.md"
+timestamp=2026-10-30T10:42:20.240Z level=INFO run=01077a50 message=loop session.id=ses_e7398c186ffenvQoimwSO2wUsJ step=0
+timestamp=2026-10-30T10:42:20.402Z level=INFO run=01077a50 message=stream providerID=opencode modelID=gpt-5.4-nano session.id=ses_e7398c186ffenvQoimwSO2wUsJ small=true agent=title mode=primary
+timestamp=2026-10-30T10:42:20.421Z level=INFO run=01077a50 message="llm runtime selected" llm.runtime=ai-sdk llm.provider=opencode llm.model=gpt-5.4-nano
+timestamp=2026-10-30T10:42:42.936Z level=ERROR run=01077a50 message="stream error" providerID=opencode modelID=gpt-5.4-nano session.id=ses_e7398c186ffenvQoimwSO2wUsJ small=true agent=title mode=primary error.error="AI_APICallError: Upstream request failed: Insufficient account funds"
+timestamp=2026-10-30T10:42:42.959Z level=WARN run=01077a50 message="duplicate skill name" name=developing-with-streamlit existing="C:\\Users\\Palak\\.claude\\skills\\developing-with-streamlit\\SKILL.md" duplicate="C:\\Users\\Palak\\.agents\\skills\\developing-with-streamlit\\SKILL.md"
+timestamp=2026-10-30T10:42:42.959Z level=INFO run=01077a50 message=init count=3
+timestamp=2026-10-30T10:42:43.202Z level=INFO run=01077a50 message="watcher backend" directory="D:\\Model To Gradio" platform=win32 backend=windows
+timestamp=2026-10-30T10:42:43.277Z level=INFO run=01077a50 message="project copy refresh started" projectID=global
+timestamp=2026-10-30T10:42:43.280Z level=INFO run=01077a50 message="project copy refresh done" projectID=global updated=[] removed=[]
+timestamp=2026-10-30T10:42:43.335Z level=INFO run=01077a50 message="booting location services" directory="D:\\Model To Gradio" workspaceID=undefined
+timestamp=2026-10-30T10:42:43.749Z level=INFO run=01077a50 message=process session.id=ses_e7398c186ffenvQoimwSO2wUsJ messageID=msg_18c6743d7001gPWnWDqv4MBNyM
+timestamp=2026-10-30T10:42:43.751Z level=INFO run=01077a50 message=stream providerID=opencode modelID=glm-5.3-flash session.id=ses_e7398c186ffenvQoimwSO2wUsJ small=false agent=build mode=primary
+timestamp=2026-10-30T10:42:43.761Z level=INFO run=01077a50 message="llm runtime selected" llm.runtime=ai-sdk llm.provider=opencode llm.model=glm-5.3-flash
+timestamp=2026-10-30T10:42:44.767Z level=ERROR run=01077a50 message="stream error" providerID=opencode modelID=glm-5.3-flash session.id=ses_e7398c186ffenvQoimwSO2wUsJ small=false agent=build mode=primary error.error="AI_APICallError: Upstream request failed: Insufficient account funds"
+timestamp=2026-10-30T10:42:47.227Z level=INFO run=01077a50 message=stream providerID=opencode modelID=glm-5.3-flash session.id=ses_e7398c186ffenvQoimwSO2wUsJ small=false agent=build mode=primary
+timestamp=2026-10-30T10:42:47.247Z level=INFO run=01077a50 message="llm runtime selected" llm.runtime=ai-sdk llm.provider=opencode llm.model=glm-5.3-flash
+timestamp=2026-10-30T10:42:48.089Z level=ERROR run=01077a50 message="stream error" providerID=opencode modelID=glm-5.3-flash session.id=ses_e7398c186ffenvQoimwSO2wUsJ small=false agent=build mode=primary error.error="AI_APICallError: Upstream request failed: Insufficient account funds"
+timestamp=2026-10-30T10:42:52.840Z level=INFO run=01077a50 message=stream providerID=opencode modelID=glm-5.3-flash session.id=ses_e7398c186ffenvQoimwSO2wUsJ small=false agent=build mode=primary
+timestamp=2026-10-30T10:42:52.859Z level=INFO run=01077a50 message="llm runtime selected" llm.runtime=ai-sdk llm.provider=opencode llm.model=glm-5.3-flash
+timestamp=2026-10-30T10:42:53.727Z level=ERROR run=01077a50 message="stream error" providerID=opencode modelID=glm-5.3-flash session.id=ses_e7398c186ffenvQoimwSO2wUsJ small=false agent=build mode=primary error.error="AI_APICallError: Upstream request failed: Insufficient account funds"
+timestamp=2026-10-30T10:43:02.755Z level=INFO run=01077a50 message=stream providerID=opencode modelID=glm-5.3-flash session.id=ses_e7398c186ffenvQoimwSO2wUsJ small=false agent=build mode=primary
+timestamp=2026-10-30T10:43:02.761Z level=INFO run=01077a50 message="llm runtime selected" llm.runtime=ai-sdk llm.provider=opencode llm.model=glm-5.3-flash
+timestamp=2026-10-30T10:43:03.771Z level=ERROR run=01077a50 message="stream error" providerID=opencode modelID=glm-5.3-flash session.id=ses_e7398c186ffenvQoimwSO2wUsJ small=false agent=build mode=primary error.error="AI_APICallError: Upstream request failed: Insufficient account funds"
+timestamp=2026-10-30T10:43:20.205Z level=INFO run=01077a50 message=stream providerID=opencode modelID=glm-5.3-flash session.id=ses_e7398c186ffenvQoimwSO2wUsJ small=false agent=build mode=primary
+timestamp=2026-10-30T10:43:20.225Z level=INFO run=01077a50 message="llm runtime selected" llm.runtime=ai-sdk llm.provider=opencode llm.model=glm-5.3-flash
+timestamp=2026-10-30T10:43:21.070Z level=ERROR run=01077a50 message="stream error" providerID=opencode modelID=glm-5.3-flash session.id=ses_e7398c186ffenvQoimwSO2wUsJ small=false agent=build mode=primary error.error="AI_APICallError: Upstream request failed: Insufficient account funds"
+timestamp=2026-10-30T10:43:55.218Z level=INFO run=01077a50 message=stream providerID=opencode modelID=glm-5.3-flash session.id=ses_e7398c186ffenvQoimwSO2wUsJ small=false agent=build mode=primary
+timestamp=2026-10-30T10:43:55.243Z level=INFO run=01077a50 message="llm runtime selected" llm.runtime=ai-sdk llm.provider=opencode llm.model=glm-5.3-flash
+timestamp=2026-10-30T11:37:21.894Z level=INFO run=50a8eeeb message="watcher backend" directory="D:\\Model To Gradio" platform=win32 backend=windows
+timestamp=2026-10-30T11:37:22.075Z level=INFO run=50a8eeeb message="project copy refresh started" projectID=global
+timestamp=2026-10-30T11:37:22.080Z level=INFO run=50a8eeeb message="project copy refresh done" projectID=global updated=[] removed=[]
+timestamp=2026-10-30T11:37:22.086Z level=INFO run=50a8eeeb message="booting location services" directory="D:\\Model To Gradio" workspaceID=undefined
+timestamp=2026-10-30T11:54:14.404Z level=INFO run=ca566e39 message="creating instance" directory="D:\\Model To Gradio"
+timestamp=2026-10-30T11:54:14.406Z level=INFO run=ca566e39 message=fromDirectory directory="D:\\Model To Gradio"
+timestamp=2026-10-30T11:54:14.442Z level=INFO run=ca566e39 message=bootstrapping directory="D:\\Model To Gradio"
+timestamp=2026-10-30T11:54:14.450Z level=INFO run=ca566e39 message=loading path="C:\\Users\\Palak\\.config\\opencode\\config.json"
+timestamp=2026-10-30T11:54:14.452Z level=INFO run=ca566e39 message=loading path="C:\\Users\\Palak\\.config\\opencode\\opencode.json"
+timestamp=2026-10-30T11:54:14.454Z level=INFO run=ca566e39 message=loading path="C:\\Users\\Palak\\.config\\opencode\\opencode.jsonc"
+timestamp=2026-10-30T11:54:14.461Z level=INFO run=ca566e39 message=loading path="D:\\Model To Gradio\\opencode.json"
+timestamp=2026-10-30T11:54:14.587Z level=INFO run=ca566e39 message="all LSPs are disabled"
+timestamp=2026-10-30T11:54:14.588Z level=INFO run=ca566e39 message="all formatters are disabled"
+timestamp=2026-10-30T11:54:14.588Z level=INFO run=ca566e39 message=init
+timestamp=2026-10-30T11:54:14.745Z level=INFO run=ca566e39 message=created id=ses_e7356e6a7ffer5gz22fnHc1k64 slug=crisp-harbor version=1.19.5 projectID=global directory="D:\\Model To Gradio" path="Model To Gradio" workspaceID=undefined parentID=undefined title="New session - 2026-10-30T11:54:14.745Z" agent=undefined model=undefined metadata=undefined permission="[{\"permission\":\"question\",\"pattern\":\"*\",\"action\":\"deny\"},{\"permission\":\"plan_enter\",\"pattern\":\"*\",\"action\":\"deny\"},{\"permission\":\"plan_exit\",\"pattern\":\"*\",\"action\":\"deny\"}]" cost=0 tokens.input=0 tokens.output=0 tokens.reasoning=0 tokens.cache.read=0 tokens.cache.write=0 time.created=1793361254745 time.updated=1793361254745
+timestamp=2026-10-30T11:54:14.764Z level=INFO run=ca566e39 message="event connected"
+timestamp=2026-10-30T11:54:14.836Z level=INFO run=ca566e39 message=loop session.id=ses_e7356e6a7ffer5gz22fnHc1k64 step=0
+timestamp=2026-10-30T11:54:15.703Z level=INFO run=ca566e39 message="shell tool using shell" shell="C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.EXE"
+timestamp=2026-10-30T11:54:15.835Z level=INFO run=ca566e39 message=stream providerID=opencode modelID=gpt-5.4-nano session.id=ses_e7356e6a7ffer5gz22fnHc1k64 small=true agent=title mode=primary
+timestamp=2026-10-30T11:54:15.867Z level=INFO run=ca566e39 message="llm runtime selected" llm.runtime=ai-sdk llm.provider=opencode llm.model=gpt-5.4-nano
+timestamp=2026-10-30T11:54:26.264Z level=WARN run=ca566e39 message="duplicate skill name" name=developing-with-streamlit existing="C:\\Users\\Palak\\.claude\\skills\\developing-with-streamlit\\SKILL.md" duplicate="C:\\Users\\Palak\\.agents\\skills\\developing-with-streamlit\\SKILL.md"
+timestamp=2026-10-30T11:54:26.264Z level=INFO run=ca566e39 message=init count=3
+timestamp=2026-10-30T11:54:26.272Z level=ERROR run=ca566e39 message="stream error" providerID=opencode modelID=gpt-5.4-nano session.id=ses_e7356e6a7ffer5gz22fnHc1k64 small=true agent=title mode=primary error.error="AI_APICallError: Upstream request failed: Insufficient account funds"
+timestamp=2026-10-30T11:54:26.338Z level=INFO run=ca566e39 message="watcher backend" directory="D:\\Model To Gradio" platform=win32 backend=windows
+timestamp=2026-10-30T11:54:26.379Z level=INFO run=ca566e39 message="project copy refresh started" projectID=global
+timestamp=2026-10-30T11:54:26.381Z level=INFO run=ca566e39 message="project copy refresh done" projectID=global updated=[] removed=[]
+timestamp=2026-10-30T11:54:26.455Z level=INFO run=ca566e39 message="booting location services" directory="D:\\Model To Gradio" workspaceID=undefined
+timestamp=2026-10-30T11:54:26.780Z level=INFO run=ca566e39 message=process session.id=ses_e7356e6a7ffer5gz22fnHc1k64 messageID=msg_18ca91cd9001Y2B67gGNpOlp35
+timestamp=2026-10-30T11:54:26.781Z level=INFO run=ca566e39 message=stream providerID=opencode modelID=glm-5.3-flash-free session.id=ses_e7356e6a7ffer5gz22fnHc1k64 small=false agent=build mode=primary
+timestamp=2026-10-30T11:54:26.792Z level=INFO run=ca566e39 message="llm runtime selected" llm.runtime=ai-sdk llm.provider=opencode llm.model=glm-5.3-flash-free
+timestamp=2026-10-30T12:22:51.328Z level=INFO run=f436ef84 message="creating instance" directory="D:\\Model To Gradio"
+timestamp=2026-10-30T12:22:51.330Z level=INFO run=f436ef84 message=fromDirectory directory="D:\\Model To Gradio"
+timestamp=2026-10-30T12:22:51.368Z level=INFO run=f436ef84 message=bootstrapping directory="D:\\Model To Gradio"
+timestamp=2026-10-30T12:22:51.377Z level=INFO run=f436ef84 message=loading path="C:\\Users\\Palak\\.config\\opencode\\config.json"
+timestamp=2026-10-30T12:22:51.378Z level=INFO run=f436ef84 message=loading path="C:\\Users\\Palak\\.config\\opencode\\opencode.json"
+timestamp=2026-10-30T12:22:51.379Z level=INFO run=f436ef84 message=loading path="C:\\Users\\Palak\\.config\\opencode\\opencode.jsonc"
+timestamp=2026-10-30T12:22:51.394Z level=INFO run=f436ef84 message=loading path="D:\\Model To Gradio\\opencode.json"
+timestamp=2026-10-30T12:22:51.531Z level=INFO run=f436ef84 message="all LSPs are disabled"
+timestamp=2026-10-30T12:22:51.532Z level=INFO run=f436ef84 message="all formatters are disabled"
+timestamp=2026-10-30T12:22:51.532Z level=INFO run=f436ef84 message=init
+timestamp=2026-10-30T12:22:51.713Z level=INFO run=f436ef84 message=created id=ses_e733cb3beffeP33VCIAZzUgT4i slug=nimble-nebula version=1.19.5 projectID=global directory="D:\\Model To Gradio" path="Model To Gradio" workspaceID=undefined parentID=undefined title="New session - 2026-10-30T12:22:51.713Z" agent=undefined model=undefined metadata=undefined permission="[{\"permission\":\"question\",\"pattern\":\"*\",\"action\":\"deny\"},{\"permission\":\"plan_enter\",\"pattern\":\"*\",\"action\":\"deny\"},{\"permission\":\"plan_exit\",\"pattern\":\"*\",\"action\":\"deny\"}]" cost=0 tokens.input=0 tokens.output=0 tokens.reasoning=0 tokens.cache.read=0 tokens.cache.write=0 time.created=1793362971713 time.updated=1793362971713
+timestamp=2026-10-30T12:22:51.736Z level=INFO run=f436ef84 message="event connected"
+timestamp=2026-10-30T12:22:51.794Z level=INFO run=f436ef84 message=file mime=text/plain
+timestamp=2026-10-30T12:22:51.825Z level=INFO run=f436ef84 message="shell tool using shell" shell="C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.EXE"
+timestamp=2026-10-30T12:22:52.760Z level=INFO run=f436ef84 message="touching file" file="D:\\Model To Gradio\\.m2g\\opencode\\req_t74fiv2m\\request.md"
+timestamp=2026-10-30T12:22:52.765Z level=INFO run=f436ef84 message=loop session.id=ses_e733cb3beffeP33VCIAZzUgT4i step=0
+timestamp=2026-10-30T12:22:52.915Z level=INFO run=f436ef84 message=stream providerID=opencode modelID=gpt-5.4-nano session.id=ses_e733cb3beffeP33VCIAZzUgT4i small=true agent=title mode=primary
+timestamp=2026-10-30T12:22:52.934Z level=INFO run=f436ef84 message="llm runtime selected" llm.runtime=ai-sdk llm.provider=opencode llm.model=gpt-5.4-nano
+timestamp=2026-10-30T12:23:39.987Z level=ERROR run=f436ef84 message="stream error" providerID=opencode modelID=gpt-5.4-nano session.id=ses_e733cb3beffeP33VCIAZzUgT4i small=true agent=title mode=primary error.error="AI_APICallError: Upstream request failed: Insufficient account funds"
+timestamp=2026-10-30T12:23:40.237Z level=INFO run=f436ef84 message="watcher backend" directory="D:\\Model To Gradio" platform=win32 backend=windows
+timestamp=2026-10-30T12:23:41.334Z level=INFO run=f436ef84 message="project copy refresh started" projectID=global
+timestamp=2026-10-30T12:23:41.341Z level=INFO run=f436ef84 message="project copy refresh done" projectID=global updated=[] removed=[]
+timestamp=2026-10-30T12:23:41.673Z level=INFO run=f436ef84 message="booting location services" directory="D:\\Model To Gradio" workspaceID=undefined
+timestamp=2026-10-30T12:23:43.556Z level=INFO run=f436ef84 message=process session.id=ses_e733cb3beffeP33VCIAZzUgT4i messageID=msg_18cc35061001sjPOwor89of0SY
+timestamp=2026-10-30T12:23:43.561Z level=INFO run=f436ef84 message=stream providerID=opencode modelID=glm-5.3-flash-free session.id=ses_e733cb3beffeP33VCIAZzUgT4i small=false agent=build mode=primary
+timestamp=2026-10-30T12:23:43.599Z level=INFO run=f436ef84 message="llm runtime selected" llm.runtime=ai-sdk llm.provider=opencode llm.model=glm-5.3-flash-free
+timestamp=2026-10-30T12:24:04.906Z level=INFO run=d1371e38 message="creating instance" directory="D:\\Model To Gradio"
+timestamp=2026-10-30T12:24:04.911Z level=INFO run=d1371e38 message=fromDirectory directory="D:\\Model To Gradio"
+timestamp=2026-10-30T12:24:04.934Z level=INFO run=d1371e38 message=bootstrapping directory="D:\\Model To Gradio"
+timestamp=2026-10-30T12:24:04.946Z level=INFO run=d1371e38 message=loading path="C:\\Users\\Palak\\.config\\opencode\\config.json"
+timestamp=2026-10-30T12:24:04.947Z level=INFO run=d1371e38 message=loading path="C:\\Users\\Palak\\.config\\opencode\\opencode.json"
+timestamp=2026-10-30T12:24:04.948Z level=INFO run=d1371e38 message=loading path="C:\\Users\\Palak\\.config\\opencode\\opencode.jsonc"
+timestamp=2026-10-30T12:24:04.959Z level=INFO run=d1371e38 message=loading path="D:\\Model To Gradio\\opencode.json"
+timestamp=2026-10-30T12:24:05.100Z level=INFO run=d1371e38 message="all LSPs are disabled"
+timestamp=2026-10-30T12:24:05.101Z level=INFO run=d1371e38 message="all formatters are disabled"
+timestamp=2026-10-30T12:24:05.101Z level=INFO run=d1371e38 message=init
+timestamp=2026-10-30T12:24:05.299Z level=INFO run=d1371e38 message=created id=ses_e733b944cffeYOtdMWq5kiDZaF slug=jolly-circuit version=1.19.5 projectID=global directory="D:\\Model To Gradio" path="Model To Gradio" workspaceID=undefined parentID=undefined title="New session - 2026-10-30T12:24:05.299Z" agent=undefined model=undefined metadata=undefined permission="[{\"permission\":\"question\",\"pattern\":\"*\",\"action\":\"deny\"},{\"permission\":\"plan_enter\",\"pattern\":\"*\",\"action\":\"deny\"},{\"permission\":\"plan_exit\",\"pattern\":\"*\",\"action\":\"deny\"}]" cost=0 tokens.input=0 tokens.output=0 tokens.reasoning=0 tokens.cache.read=0 tokens.cache.write=0 time.created=1793363045299 time.updated=1793363045299
+timestamp=2026-10-30T12:24:05.316Z level=INFO run=d1371e38 message="event connected"
+timestamp=2026-10-30T12:24:05.352Z level=INFO run=d1371e38 message=file mime=text/plain
+timestamp=2026-10-30T12:24:05.381Z level=INFO run=d1371e38 message="shell tool using shell" shell="C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.EXE"
+timestamp=2026-10-30T12:24:06.024Z level=INFO run=d1371e38 message="touching file" file="D:\\Model To Gradio\\.m2g\\opencode\\req_ouz4rc_i\\request.md"
+timestamp=2026-10-30T12:24:06.028Z level=INFO run=d1371e38 message=loop session.id=ses_e733b944cffeYOtdMWq5kiDZaF step=0
+timestamp=2026-10-30T12:24:06.142Z level=INFO run=d1371e38 message=stream providerID=opencode modelID=gpt-5.4-nano session.id=ses_e733b944cffeYOtdMWq5kiDZaF small=true agent=title mode=primary
+timestamp=2026-10-30T12:24:06.154Z level=INFO run=d1371e38 message="llm runtime selected" llm.runtime=ai-sdk llm.provider=opencode llm.model=gpt-5.4-nano
+timestamp=2026-10-30T12:24:56.351Z level=ERROR run=d1371e38 message="stream error" providerID=opencode modelID=gpt-5.4-nano session.id=ses_e733b944cffeYOtdMWq5kiDZaF small=true agent=title mode=primary error.error="AI_APICallError: Upstream request failed: Insufficient account funds"
+timestamp=2026-10-30T12:24:56.845Z level=INFO run=d1371e38 message="watcher backend" directory="D:\\Model To Gradio" platform=win32 backend=windows
+timestamp=2026-10-30T12:24:56.958Z level=INFO run=d1371e38 message="project copy refresh started" projectID=global
+timestamp=2026-10-30T12:24:56.972Z level=INFO run=d1371e38 message="project copy refresh done" projectID=global updated=[] removed=[]
+timestamp=2026-10-30T12:24:57.192Z level=INFO run=d1371e38 message="booting location services" directory="D:\\Model To Gradio" workspaceID=undefined
+timestamp=2026-10-30T12:25:00.376Z level=INFO run=d1371e38 message=process session.id=ses_e733b944cffeYOtdMWq5kiDZaF messageID=msg_18cc46e90001bVtqWZDkcf6KDN
+timestamp=2026-10-30T12:25:00.387Z level=INFO run=d1371e38 message=stream providerID=opencode modelID=glm-5.3-flash-free session.id=ses_e733b944cffeYOtdMWq5kiDZaF small=false agent=build mode=primary
+timestamp=2026-10-30T12:25:00.441Z level=INFO run=d1371e38 message="llm runtime selected" llm.runtime=ai-sdk llm.provider=opencode llm.model=glm-5.3-flash-free
+timestamp=2026-10-30T12:56:06.455Z level=INFO run=50a8eeeb message="disposing all instances"
+timestamp=2026-10-30T12:56:06.459Z level=INFO run=50a8eeeb message="disposing instance" directory="D:\\Model To Gradio"
+timestamp=2026-10-30T19:45:02.488Z level=INFO run=51656963 message="creating instance" directory="D:\\Model To Gradio"
+timestamp=2026-10-30T19:45:02.489Z level=INFO run=51656963 message=fromDirectory directory="D:\\Model To Gradio"
+timestamp=2026-10-30T19:45:02.504Z level=INFO run=51656963 message=bootstrapping directory="D:\\Model To Gradio"
+timestamp=2026-10-30T19:45:02.526Z level=INFO run=51656963 message=loading path="C:\\Users\\Palak\\.config\\opencode\\config.json"
+timestamp=2026-10-30T19:45:02.527Z level=INFO run=51656963 message=loading path="C:\\Users\\Palak\\.config\\opencode\\opencode.json"
+timestamp=2026-10-30T19:45:02.527Z level=INFO run=51656963 message=loading path="C:\\Users\\Palak\\.config\\opencode\\opencode.jsonc"
+timestamp=2026-10-30T19:45:02.570Z level=INFO run=51656963 message=loading path="D:\\Model To Gradio\\opencode.json"
+timestamp=2026-10-30T19:45:02.675Z level=INFO run=51656963 message="all LSPs are disabled"
+timestamp=2026-10-30T19:45:02.675Z level=INFO run=51656963 message="all formatters are disabled"
+timestamp=2026-10-30T19:45:02.676Z level=INFO run=51656963 message=init
+timestamp=2026-10-30T19:45:17.784Z level=INFO run=5633ef25 message="creating instance" directory="D:\\Model To Gradio"
+timestamp=2026-10-30T19:45:17.785Z level=INFO run=5633ef25 message=fromDirectory directory="D:\\Model To Gradio"
+timestamp=2026-10-30T19:45:17.799Z level=INFO run=5633ef25 message=bootstrapping directory="D:\\Model To Gradio"
+timestamp=2026-10-30T19:45:17.805Z level=INFO run=5633ef25 message=loading path="C:\\Users\\Palak\\.config\\opencode\\config.json"
+timestamp=2026-10-30T19:45:17.806Z level=INFO run=5633ef25 message=loading path="C:\\Users\\Palak\\.config\\opencode\\opencode.json"
+timestamp=2026-10-30T19:45:17.806Z level=INFO run=5633ef25 message=loading path="C:\\Users\\Palak\\.config\\opencode\\opencode.jsonc"
+timestamp=2026-10-30T19:45:17.812Z level=INFO run=5633ef25 message=loading path="D:\\Model To Gradio\\opencode.json"
+timestamp=2026-10-30T19:45:17.896Z level=INFO run=5633ef25 message="all LSPs are disabled"
+timestamp=2026-10-30T19:45:17.897Z level=INFO run=5633ef25 message="all formatters are disabled"
+timestamp=2026-10-30T19:45:17.897Z level=INFO run=5633ef25 message=init
+timestamp=2026-10-30T19:45:18.041Z level=INFO run=5633ef25 message=created id=ses_e71a7a327ffe5OdqVc67qyphR3 slug=brave-eagle version=1.19.5 projectID=global directory="D:\\Model To Gradio" path="Model To Gradio" workspaceID=undefined parentID=undefined title="New session - 2026-10-30T19:45:18.041Z" agent=undefined model=undefined metadata=undefined permission="[{\"permission\":\"question\",\"pattern\":\"*\",\"action\":\"deny\"},{\"permission\":\"plan_enter\",\"pattern\":\"*\",\"action\":\"deny\"},{\"permission\":\"plan_exit\",\"pattern\":\"*\",\"action\":\"deny\"}]" cost=0 tokens.input=0 tokens.output=0 tokens.reasoning=0 tokens.cache.read=0 tokens.cache.write=0 time.created=1793389518041 time.updated=1793389518041
+timestamp=2026-10-30T19:45:18.062Z level=INFO run=5633ef25 message="event connected"
+timestamp=2026-10-30T19:45:18.127Z level=INFO run=5633ef25 message=loop session.id=ses_e71a7a327ffe5OdqVc67qyphR3 step=0
+timestamp=2026-10-30T19:45:18.641Z level=INFO run=5633ef25 message="shell tool using shell" shell="C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.EXE"
+timestamp=2026-10-30T19:45:18.721Z level=INFO run=5633ef25 message=stream providerID=opencode modelID=gpt-5.4-nano session.id=ses_e71a7a327ffe5OdqVc67qyphR3 small=true agent=title mode=primary
+timestamp=2026-10-30T19:45:18.737Z level=INFO run=5633ef25 message="llm runtime selected" llm.runtime=ai-sdk llm.provider=opencode llm.model=gpt-5.4-nano
+timestamp=2026-10-30T19:45:33.875Z level=ERROR run=5633ef25 message="stream error" providerID=opencode modelID=gpt-5.4-nano session.id=ses_e71a7a327ffe5OdqVc67qyphR3 small=true agent=title mode=primary error.error="AI_APICallError: Upstream request failed: Insufficient account funds"
+timestamp=2026-10-30T19:45:34.366Z level=INFO run=5633ef25 message="watcher backend" directory="D:\\Model To Gradio" platform=win32 backend=windows
+timestamp=2026-10-30T19:45:36.026Z level=INFO run=5633ef25 message="project copy refresh started" projectID=global
+timestamp=2026-10-30T19:45:36.031Z level=INFO run=5633ef25 message="project copy refresh done" projectID=global updated=[] removed=[]
+timestamp=2026-10-30T19:45:36.143Z level=INFO run=5633ef25 message="booting location services" directory="D:\\Model To Gradio" workspaceID=undefined
+timestamp=2026-10-30T19:45:36.763Z level=INFO run=5633ef25 message=process session.id=ses_e71a7a327ffe5OdqVc67qyphR3 messageID=msg_18e585f15001B5BdVgDElqVM7h
+timestamp=2026-10-30T19:45:36.764Z level=INFO run=5633ef25 message=stream providerID=opencode modelID=glm-5.3-flash-free session.id=ses_e71a7a327ffe5OdqVc67qyphR3 small=false agent=build mode=primary
+timestamp=2026-10-30T19:45:36.772Z level=INFO run=5633ef25 message="llm runtime selected" llm.runtime=ai-sdk llm.provider=opencode llm.model=glm-5.3-flash-free
+timestamp=2026-10-30T19:45:37.821Z level=ERROR run=5633ef25 message="stream error" providerID=opencode modelID=glm-5.3-flash-free session.id=ses_e71a7a327ffe5OdqVc67qyphR3 small=false agent=build mode=primary error.error="AI_APICallError: Free usage limit reached. Free models work in OpenCode (https://opencode.ai); subscribe to OpenCode Go to keep going: https://opencode.ai/go"
+timestamp=2026-10-31T05:45:23.515Z level=INFO run=1f03ce76 message="creating instance" directory="D:\\Model To Gradio"
+timestamp=2026-10-31T05:45:23.518Z level=INFO run=1f03ce76 message=fromDirectory directory="D:\\Model To Gradio"
+timestamp=2026-10-31T05:45:23.557Z level=INFO run=1f03ce76 message=bootstrapping directory="D:\\Model To Gradio"
+timestamp=2026-10-31T05:45:23.586Z level=INFO run=1f03ce76 message=loading path="C:\\Users\\Palak\\.config\\opencode\\config.json"
+timestamp=2026-10-31T05:45:23.589Z level=INFO run=1f03ce76 message=loading path="C:\\Users\\Palak\\.config\\opencode\\opencode.json"
+timestamp=2026-10-31T05:45:23.589Z level=INFO run=1f03ce76 message=loading path="C:\\Users\\Palak\\.config\\opencode\\opencode.jsonc"
+timestamp=2026-10-31T05:45:23.645Z level=INFO run=1f03ce76 message=loading path="D:\\Model To Gradio\\opencode.json"
+timestamp=2026-10-31T05:45:23.777Z level=INFO run=1f03ce76 message="all LSPs are disabled"
+timestamp=2026-10-31T05:45:23.778Z level=INFO run=1f03ce76 message="all formatters are disabled"
+timestamp=2026-10-31T05:45:23.778Z level=INFO run=1f03ce76 message=init
+timestamp=2026-10-31T05:45:36.501Z level=INFO run=47d6e6c0 message="creating instance" directory="D:\\Model To Gradio"
+timestamp=2026-10-31T05:45:36.502Z level=INFO run=47d6e6c0 message=fromDirectory directory="D:\\Model To Gradio"
+timestamp=2026-10-31T05:45:36.519Z level=INFO run=47d6e6c0 message=bootstrapping directory="D:\\Model To Gradio"
+timestamp=2026-10-31T05:45:36.527Z level=INFO run=47d6e6c0 message=loading path="C:\\Users\\Palak\\.config\\opencode\\config.json"
+timestamp=2026-10-31T05:45:36.527Z level=INFO run=47d6e6c0 message=loading path="C:\\Users\\Palak\\.config\\opencode\\opencode.json"
+timestamp=2026-10-31T05:45:36.528Z level=INFO run=47d6e6c0 message=loading path="C:\\Users\\Palak\\.config\\opencode\\opencode.jsonc"
+timestamp=2026-10-31T05:45:36.536Z level=INFO run=47d6e6c0 message=loading path="D:\\Model To Gradio\\opencode.json"
+timestamp=2026-10-31T05:45:36.659Z level=INFO run=47d6e6c0 message="all LSPs are disabled"
+timestamp=2026-10-31T05:45:36.660Z level=INFO run=47d6e6c0 message="all formatters are disabled"
+timestamp=2026-10-31T05:45:36.660Z level=INFO run=47d6e6c0 message=init
+timestamp=2026-10-31T05:45:36.835Z level=INFO run=47d6e6c0 message=created id=ses_e6f8208bcffenfxsWUk7okvkKb slug=curious-canyon version=1.19.5 projectID=global directory="D:\\Model To Gradio" path="Model To Gradio" workspaceID=undefined parentID=undefined title="New session - 2026-10-31T05:45:36.835Z" agent=undefined model=undefined metadata=undefined permission="[{\"permission\":\"question\",\"pattern\":\"*\",\"action\":\"deny\"},{\"permission\":\"plan_enter\",\"pattern\":\"*\",\"action\":\"deny\"},{\"permission\":\"plan_exit\",\"pattern\":\"*\",\"action\":\"deny\"}]" cost=0 tokens.input=0 tokens.output=0 tokens.reasoning=0 tokens.cache.read=0 tokens.cache.write=0 time.created=1793425536835 time.updated=1793425536835
+timestamp=2026-10-31T05:45:36.853Z level=INFO run=47d6e6c0 message="event connected"
+timestamp=2026-10-31T05:45:36.932Z level=INFO run=47d6e6c0 message=loop session.id=ses_e6f8208bcffenfxsWUk7okvkKb step=0
+timestamp=2026-10-31T05:45:37.510Z level=INFO run=47d6e6c0 message="shell tool using shell" shell="C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.EXE"
+timestamp=2026-10-31T05:45:37.555Z level=INFO run=47d6e6c0 message=stream providerID=opencode modelID=gpt-5.4-nano session.id=ses_e6f8208bcffenfxsWUk7okvkKb small=true agent=title mode=primary
+timestamp=2026-10-31T05:45:37.572Z level=INFO run=47d6e6c0 message="llm runtime selected" llm.runtime=ai-sdk llm.provider=opencode llm.model=gpt-5.4-nano
+timestamp=2026-10-31T05:45:47.266Z level=ERROR run=47d6e6c0 message="stream error" providerID=opencode modelID=gpt-5.4-nano session.id=ses_e6f8208bcffenfxsWUk7okvkKb small=true agent=title mode=primary error.error="AI_APICallError: Upstream request failed: Insufficient account funds"
+timestamp=2026-10-31T05:45:47.413Z level=INFO run=47d6e6c0 message="watcher backend" directory="D:\\Model To Gradio" platform=win32 backend=windows
+timestamp=2026-10-31T05:45:48.379Z level=INFO run=47d6e6c0 message="project copy refresh started" projectID=global
+timestamp=2026-10-31T05:45:48.382Z level=INFO run=47d6e6c0 message="project copy refresh done" projectID=global updated=[] removed=[]
+timestamp=2026-10-31T05:45:48.441Z level=INFO run=47d6e6c0 message="booting location services" directory="D:\\Model To Gradio" workspaceID=undefined
+timestamp=2026-10-31T05:45:48.848Z level=INFO run=47d6e6c0 message=process session.id=ses_e6f8208bcffenfxsWUk7okvkKb messageID=msg_1907df9c8001ZQM5H1yRKyvInv
+timestamp=2026-10-31T05:45:48.850Z level=INFO run=47d6e6c0 message=stream providerID=opencode modelID=glm-5.3-flash-free session.id=ses_e6f8208bcffenfxsWUk7okvkKb small=false agent=build mode=primary
+timestamp=2026-10-31T05:45:48.862Z level=INFO run=47d6e6c0 message="llm runtime selected" llm.runtime=ai-sdk llm.provider=opencode llm.model=glm-5.3-flash-free
+timestamp=2026-10-31T05:45:50.048Z level=ERROR run=47d6e6c0 message="stream error" providerID=opencode modelID=glm-5.3-flash-free session.id=ses_e6f8208bcffenfxsWUk7okvkKb small=false agent=build mode=primary error.error="AI_APICallError: Free usage limit reached. Free models work in OpenCode (https://opencode.ai); subscribe to OpenCode Go to keep going: https://opencode.ai/go"

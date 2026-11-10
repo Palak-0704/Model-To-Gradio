@@ -1,0 +1,505 @@
+{
+  "python": "3.15.2 (tags/v3.15.2:5e58eaa, Oct 25 2026, 17:27:03) [MSC v.1951 64 bit (AMD64)]",
+  "volumes": {
+    "D:\\Model To Gradio\\.m2g\\rea": {
+      "root": "D:\\",
+      "ok": true,
+      "filesystem": "NTFS",
+      "supports_sparse": true,
+      "supports_compression": true,
+      "volume_is_compressed": false,
+      "flags_hex": "0x3e72eff"
+    },
+    "C:\\Users\\Palak\\AppData\\Local\\Temp": {
+      "root": "C:\\",
+      "ok": true,
+      "filesystem": "NTFS",
+      "supports_sparse": true,
+      "supports_compression": true,
+      "volume_is_compressed": false,
+      "flags_hex": "0x3e72eff"
+    }
+  },
+  "rows": [
+    {
+      "folder": "D:\\Model To Gradio\\.m2g\\rea",
+      "logical_mib": 64,
+      "variant": "current",
+      "logical_ok": true,
+      "attrs": {
+        "hex": "0x220",
+        "sparse": true,
+        "compressed": false,
+        "not_content_indexed": false
+      },
+      "alloc_mib_at_0s": 0.31,
+      "ranges_at_0s": {
+        "ok": true,
+        "error": 0,
+        "count": 1,
+        "more_data": false,
+        "total_listed": 67108864,
+        "first": [
+          [
+            0,
+            67108864
+          ]
+        ]
+      },
+      "alloc_mib_at_3s": 64.0,
+      "ranges_at_3s": {
+        "ok": true,
+        "error": 0,
+        "count": 1,
+        "more_data": false,
+        "total_listed": 67108864,
+        "first": [
+          [
+            0,
+            67108864
+          ]
+        ]
+      }
+    },
+    {
+      "folder": "D:\\Model To Gradio\\.m2g\\rea",
+      "logical_mib": 64,
+      "variant": "setendoffile",
+      "logical_ok": true,
+      "attrs": {
+        "hex": "0x220",
+        "sparse": true,
+        "compressed": false,
+        "not_content_indexed": false
+      },
+      "alloc_mib_at_0s": 0.06,
+      "ranges_at_0s": {
+        "ok": true,
+        "error": 0,
+        "count": 1,
+        "more_data": false,
+        "total_listed": 65536,
+        "first": [
+          [
+            0,
+            65536
+          ]
+        ]
+      },
+      "alloc_mib_at_3s": 0.06,
+      "ranges_at_3s": {
+        "ok": true,
+        "error": 0,
+        "count": 1,
+        "more_data": false,
+        "total_listed": 65536,
+        "first": [
+          [
+            0,
+            65536
+          ]
+        ]
+      }
+    },
+    {
+      "folder": "D:\\Model To Gradio\\.m2g\\rea",
+      "logical_mib": 64,
+      "variant": "extend_then_zero_data",
+      "logical_ok": true,
+      "attrs": {
+        "hex": "0x220",
+        "sparse": true,
+        "compressed": false,
+        "not_content_indexed": false
+      },
+      "alloc_mib_at_0s": 0.06,
+      "ranges_at_0s": {
+        "ok": true,
+        "error": 0,
+        "count": 1,
+        "more_data": false,
+        "total_listed": 65536,
+        "first": [
+          [
+            0,
+            65536
+          ]
+        ]
+      },
+      "alloc_mib_at_3s": 0.06,
+      "ranges_at_3s": {
+        "ok": true,
+        "error": 0,
+        "count": 1,
+        "more_data": false,
+        "total_listed": 65536,
+        "first": [
+          [
+            0,
+            65536
+          ]
+        ]
+      }
+    },
+    {
+      "folder": "D:\\Model To Gradio\\.m2g\\rea",
+      "logical_mib": 1024,
+      "variant": "current",
+      "logical_ok": true,
+      "attrs": {
+        "hex": "0x220",
+        "sparse": true,
+        "compressed": false,
+        "not_content_indexed": false
+      },
+      "alloc_mib_at_0s": 594.69,
+      "ranges_at_0s": {
+        "ok": true,
+        "error": 0,
+        "count": 1,
+        "more_data": false,
+        "total_listed": 1073741824,
+        "first": [
+          [
+            0,
+            1073741824
+          ]
+        ]
+      },
+      "alloc_mib_at_3s": 1024.0,
+      "ranges_at_3s": {
+        "ok": true,
+        "error": 0,
+        "count": 1,
+        "more_data": false,
+        "total_listed": 1073741824,
+        "first": [
+          [
+            0,
+            1073741824
+          ]
+        ]
+      }
+    },
+    {
+      "folder": "D:\\Model To Gradio\\.m2g\\rea",
+      "logical_mib": 1024,
+      "variant": "setendoffile",
+      "logical_ok": true,
+      "attrs": {
+        "hex": "0x220",
+        "sparse": true,
+        "compressed": false,
+        "not_content_indexed": false
+      },
+      "alloc_mib_at_0s": 0.06,
+      "ranges_at_0s": {
+        "ok": true,
+        "error": 0,
+        "count": 1,
+        "more_data": false,
+        "total_listed": 65536,
+        "first": [
+          [
+            0,
+            65536
+          ]
+        ]
+      },
+      "alloc_mib_at_3s": 0.06,
+      "ranges_at_3s": {
+        "ok": true,
+        "error": 0,
+        "count": 1,
+        "more_data": false,
+        "total_listed": 65536,
+        "first": [
+          [
+            0,
+            65536
+          ]
+        ]
+      }
+    },
+    {
+      "folder": "D:\\Model To Gradio\\.m2g\\rea",
+      "logical_mib": 1024,
+      "variant": "extend_then_zero_data",
+      "logical_ok": true,
+      "attrs": {
+        "hex": "0x220",
+        "sparse": true,
+        "compressed": false,
+        "not_content_indexed": false
+      },
+      "alloc_mib_at_0s": 0.06,
+      "ranges_at_0s": {
+        "ok": true,
+        "error": 0,
+        "count": 1,
+        "more_data": false,
+        "total_listed": 65536,
+        "first": [
+          [
+            0,
+            65536
+          ]
+        ]
+      },
+      "alloc_mib_at_3s": 0.06,
+      "ranges_at_3s": {
+        "ok": true,
+        "error": 0,
+        "count": 1,
+        "more_data": false,
+        "total_listed": 65536,
+        "first": [
+          [
+            0,
+            65536
+          ]
+        ]
+      }
+    },
+    {
+      "folder": "C:\\Users\\Palak\\AppData\\Local\\Temp",
+      "logical_mib": 64,
+      "variant": "current",
+      "logical_ok": true,
+      "attrs": {
+        "hex": "0x220",
+        "sparse": true,
+        "compressed": false,
+        "not_content_indexed": false
+      },
+      "alloc_mib_at_0s": 0.31,
+      "ranges_at_0s": {
+        "ok": true,
+        "error": 0,
+        "count": 1,
+        "more_data": false,
+        "total_listed": 67108864,
+        "first": [
+          [
+            0,
+            67108864
+          ]
+        ]
+      },
+      "alloc_mib_at_3s": 64.0,
+      "ranges_at_3s": {
+        "ok": true,
+        "error": 0,
+        "count": 1,
+        "more_data": false,
+        "total_listed": 67108864,
+        "first": [
+          [
+            0,
+            67108864
+          ]
+        ]
+      }
+    },
+    {
+      "folder": "C:\\Users\\Palak\\AppData\\Local\\Temp",
+      "logical_mib": 64,
+      "variant": "setendoffile",
+      "logical_ok": true,
+      "attrs": {
+        "hex": "0x220",
+        "sparse": true,
+        "compressed": false,
+        "not_content_indexed": false
+      },
+      "alloc_mib_at_0s": 0.06,
+      "ranges_at_0s": {
+        "ok": true,
+        "error": 0,
+        "count": 1,
+        "more_data": false,
+        "total_listed": 65536,
+        "first": [
+          [
+            0,
+            65536
+          ]
+        ]
+      },
+      "alloc_mib_at_3s": 0.06,
+      "ranges_at_3s": {
+        "ok": true,
+        "error": 0,
+        "count": 1,
+        "more_data": false,
+        "total_listed": 65536,
+        "first": [
+          [
+            0,
+            65536
+          ]
+        ]
+      }
+    },
+    {
+      "folder": "C:\\Users\\Palak\\AppData\\Local\\Temp",
+      "logical_mib": 64,
+      "variant": "extend_then_zero_data",
+      "logical_ok": true,
+      "attrs": {
+        "hex": "0x220",
+        "sparse": true,
+        "compressed": false,
+        "not_content_indexed": false
+      },
+      "alloc_mib_at_0s": 0.06,
+      "ranges_at_0s": {
+        "ok": true,
+        "error": 0,
+        "count": 1,
+        "more_data": false,
+        "total_listed": 65536,
+        "first": [
+          [
+            0,
+            65536
+          ]
+        ]
+      },
+      "alloc_mib_at_3s": 0.06,
+      "ranges_at_3s": {
+        "ok": true,
+        "error": 0,
+        "count": 1,
+        "more_data": false,
+        "total_listed": 65536,
+        "first": [
+          [
+            0,
+            65536
+          ]
+        ]
+      }
+    },
+    {
+      "folder": "C:\\Users\\Palak\\AppData\\Local\\Temp",
+      "logical_mib": 1024,
+      "variant": "current",
+      "logical_ok": true,
+      "attrs": {
+        "hex": "0x220",
+        "sparse": true,
+        "compressed": false,
+        "not_content_indexed": false
+      },
+      "alloc_mib_at_0s": 577.75,
+      "ranges_at_0s": {
+        "ok": true,
+        "error": 0,
+        "count": 1,
+        "more_data": false,
+        "total_listed": 1073741824,
+        "first": [
+          [
+            0,
+            1073741824
+          ]
+        ]
+      },
+      "alloc_mib_at_3s": 1024.0,
+      "ranges_at_3s": {
+        "ok": true,
+        "error": 0,
+        "count": 1,
+        "more_data": false,
+        "total_listed": 1073741824,
+        "first": [
+          [
+            0,
+            1073741824
+          ]
+        ]
+      }
+    },
+    {
+      "folder": "C:\\Users\\Palak\\AppData\\Local\\Temp",
+      "logical_mib": 1024,
+      "variant": "setendoffile",
+      "logical_ok": true,
+      "attrs": {
+        "hex": "0x220",
+        "sparse": true,
+        "compressed": false,
+        "not_content_indexed": false
+      },
+      "alloc_mib_at_0s": 0.06,
+      "ranges_at_0s": {
+        "ok": true,
+        "error": 0,
+        "count": 1,
+        "more_data": false,
+        "total_listed": 65536,
+        "first": [
+          [
+            0,
+            65536
+          ]
+        ]
+      },
+      "alloc_mib_at_3s": 0.06,
+      "ranges_at_3s": {
+        "ok": true,
+        "error": 0,
+        "count": 1,
+        "more_data": false,
+        "total_listed": 65536,
+        "first": [
+          [
+            0,
+            65536
+          ]
+        ]
+      }
+    },
+    {
+      "folder": "C:\\Users\\Palak\\AppData\\Local\\Temp",
+      "logical_mib": 1024,
+      "variant": "extend_then_zero_data",
+      "logical_ok": true,
+      "attrs": {
+        "hex": "0x220",
+        "sparse": true,
+        "compressed": false,
+        "not_content_indexed": false
+      },
+      "alloc_mib_at_0s": 0.06,
+      "ranges_at_0s": {
+        "ok": true,
+        "error": 0,
+        "count": 1,
+        "more_data": false,
+        "total_listed": 65536,
+        "first": [
+          [
+            0,
+            65536
+          ]
+        ]
+      },
+      "alloc_mib_at_3s": 0.06,
+      "ranges_at_3s": {
+        "ok": true,
+        "error": 0,
+        "count": 1,
+        "more_data": false,
+        "total_listed": 65536,
+        "first": [
+          [
+            0,
+            65536
+          ]
+        ]
+      }
+    }
+  ]
+}

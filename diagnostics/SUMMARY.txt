@@ -1,0 +1,30 @@
+M2G diagnostics 2026-10-31T11:15:11
+Working directory: D:\Model To Gradio
+
+=== STEP 1: static check of the changed files (tests are NOT executed in this step) ===
+validate.py defines check_call_arguments:                  True
+validate_app_code calls check_call_arguments(tree):       True
+gradio_gen.py request contains the 'exactly once' rule:   True
+tests/test_call_arguments.py test functions found:        8 (expected 8)
+
+=== STEP 2: REA MCP server: initialize + tools/list over stdio (command taken from opencode.json) ===
+REA command from opencode.json: cmd.exe /c C:\Users\Palak\AppData\Roaming\npm\rea.cmd --mcp
+initialize: OK, server={"name":"rea","version":"6.8.0"} protocolVersion=2025-06-18
+tools/list: 229 tool(s) received
+
+=== STEP 3: OpenCode evidence ===
+OpenCode executable: C:\Users\Palak\AppData\Roaming\npm\node_modules\opencode-ai\bin\opencode.exe (exists: True)
+OpenCode version: 1.19.5  [exit code 0]
+Model 'opencode/glm-5.3-flash-free' project default; listed by 'opencode models': True  [exit code 0]
+'opencode mcp list' lines mentioning rea (connection status ONLY, not proof of tool use): [34m●[39m  ✓ rea [90mconnected | [90m│[39m      [90mcmd.exe /c C:\Users\Palak\AppData\Roaming\npm\rea.cmd --mcp
+Running OpenCode once (tool requested: rea_binary_session, up to 300 s)...
+OpenCode run: TIMED OUT (killed); exit code 1
+Events parsed: 0 (non-JSON lines: 0); by type: 
+REA TOOL CALL OBSERVED IN OPENCODE EVENTS: NO (see opencode_run_events.jsonl; the raw file is authoritative)
+OpenCode log tail saved from opencode.log
+
+=== STEP 4: tests (pytest; run_tests.bat uses unittest discovery and would not collect the pytest-style new tests) ===
+pytest tests/test_call_arguments.py -> exit code 0 | 8 passed in 0.13s
+pytest (full suite)                  -> exit code 0 | 413 passed, 73 subtests passed in 42.27s
+
+Done. Files are in: D:\Model To Gradio\diagnostics
