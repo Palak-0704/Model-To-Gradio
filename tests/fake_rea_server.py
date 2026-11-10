@@ -1,13 +1,17 @@
 """Mock REA MCP server (stdio, newline-delimited JSON-RPC) used by tests/test_rea_integration.py.
 
 It speaks just enough of MCP for the platform's client: initialize, tools/list (two pages), tools/call. Its tool schemas mirror
-the real REA 6.8.0 ones for the two tools the platform may call, plus two decoys the client must never call. Every tools/call is
+the real REA 6.8.0 ones for the tools the platform may call, plus decoys the client must never call. Every tools/call is
 appended to the JSON-lines file named by FAKE_REA_LOG, so a test can prove which tools were REALLY executed and with what arguments.
 
-FAKE_REA_MODE: ok | tool_error | crash | hang | no_model_tool
+FAKE_REA_MODE: ok | tool_error | crash | hang | no_model_tool | view | view_error | no_view_tool | gguf_bad
+  view       the model-inspection result advertises a retained parent_evidence_id, so the client pages it with inspect_analysis_view
+  view_error the parent id is advertised but the view call fails (it must stay optional and never change the verdict)
+  no_view_tool  the server does not advertise inspect_analysis_view at all
 """
 import json
 import os
+import struct
 import sys
 import time
 
@@ -23,6 +27,9 @@ TOOLS = [
      "inputSchema": {"type": "object", "properties": {"path": {"type": "string"}, "hash": {"type": "string"},
                                                        "detail": {"type": "string"}, "view": {"type": "object"}},
                      "required": ["path"], "additionalProperties": False}},
+    {"name": "inspect_analysis_view", "description": "Page retained Evidence from a previous inspection.",
+     "inputSchema": {"type": "object", "properties": {"source": {"type": "object"}, "view": {"type": "object"}},
+                     "required": ["source", "view"], "additionalProperties": False}},
     {"name": "open_binary", "description": "decoy", "inputSchema": {"type": "object", "properties": {"path": {"type": "string"}},
                                                                     "required": ["path"], "additionalProperties": False}},
     {"name": "gdb_console", "description": "decoy", "inputSchema": {"type": "object", "properties": {"command": {"type": "string"}},
@@ -30,6 +37,10 @@ TOOLS = [
 ]
 if MODE == "no_model_tool":
     TOOLS = [t for t in TOOLS if t["name"] != "inspect_model_artifact"]
+if MODE == "no_view_tool":
+    TOOLS = [t for t in TOOLS if t["name"] != "inspect_analysis_view"]
+
+PARENT = "ev_" + "ab" * 32
 
 
 def send(obj):
@@ -43,6 +54,46 @@ def record(entry):
             fh.write(json.dumps(entry) + "\n")
 
 
+def _gguf_text(path):
+    """Minimal GGUF read for the mock: magic, version, tensor count. It never reads tensor data."""
+    with open(path, "rb") as fh:
+        if fh.read(4) != b"GGUF":
+            return None
+        ver = struct.unpack("<I", fh.read(4))[0]
+        if ver >= 2:
+            tcount = struct.unpack("<Q", fh.read(8))[0]
+        else:
+            tcount = struct.unpack("<I", fh.read(4))[0]
+    return {"format": "gguf", "version": ver, "tensor_count": tcount}
+
+
+def _model_text(path, args):
+    """The text a model-inspection call returns. GGUF files are detected by magic; otherwise safetensors is assumed."""
+    g = _gguf_text(path)
+    if g is not None:
+        if MODE == "gguf_bad":
+            return json.dumps({"error": {"code": "target_unavailable", "message": "GGUF header rejected"}}), True
+        return json.dumps(g), False
+    size = os.path.getsize(path)  # the LOGICAL size: what the real REA 6.8.0 validates the declared tensor offsets against
+    with open(path, "rb") as fh:
+        n = int.from_bytes(fh.read(8), "little")
+        header = json.loads(fh.read(n))  # like hash=header: only the header is read, never the tensor data
+    blocks = getattr(os.stat(path), "st_blocks", None)  # allocated 512-byte blocks (POSIX only; None on Windows)
+    record({"file_existed": True, "file_size": size, "header_bytes": n, "bytes_read": 8 + n, "hash": args.get("hash"),
+            "allocated_bytes": None if blocks is None else blocks * 512})
+    data_len = size - 8 - n
+    for key, tensor in header.items():
+        if key == "__metadata__":
+            continue
+        begin, end = tensor["data_offsets"]
+        if end > data_len:  # the failure recorded from the real REA for header-only files (diagnostics/rea_live_verification.json)
+            msg = f"Cannot open artifact: Safetensors tensor {key} range [{begin},{end}) is outside the data buffer."
+            return json.dumps({"error": {"code": "target_unavailable", "message": msg}}), True
+    text = {"format": "safetensors", "tensor_count": len([k for k in header if k != "__metadata__"]), "header_bytes": n,
+            "hash": args.get("hash"), "file_size": size}
+    return json.dumps(text), False
+
+
 def call(name, args):
     if name == "binary_session":
         return {"content": [{"type": "text", "text": json.dumps({"active_target": None, "server": "fake-rea"})}]}
@@ -53,26 +104,20 @@ def call(name, args):
             sys.exit(3)
         if MODE == "hang":
             time.sleep(60)
-        path = args["path"]
-        size = os.path.getsize(path)  # the LOGICAL size: what the real REA 6.8.0 validates the declared tensor offsets against
-        with open(path, "rb") as fh:
-            n = int.from_bytes(fh.read(8), "little")
-            header = json.loads(fh.read(n))  # like hash=header: only the header is read, never the tensor data
-        blocks = getattr(os.stat(path), "st_blocks", None)  # allocated 512-byte blocks (POSIX only; None on Windows)
-        record({"file_existed": True, "file_size": size, "header_bytes": n, "bytes_read": 8 + n, "hash": args.get("hash"),
-                "allocated_bytes": None if blocks is None else blocks * 512})
-        data_len = size - 8 - n
-        for key, tensor in header.items():
-            if key == "__metadata__":
-                continue
-            begin, end = tensor["data_offsets"]
-            if end > data_len:  # the failure recorded from the real REA for header-only files (diagnostics/rea_live_verification.json)
-                msg = f"Cannot open artifact: Safetensors tensor {key} range [{begin},{end}) is outside the data buffer."
-                return {"isError": True, "content": [{"type": "text", "text": json.dumps(
-                    {"error": {"code": "target_unavailable", "message": msg}})}]}
-        text = {"format": "safetensors", "tensor_count": len([k for k in header if k != "__metadata__"]), "header_bytes": n,
-                "hash": args.get("hash"), "file_size": size}
-        return {"content": [{"type": "text", "text": json.dumps(text)}]}
+        text, is_err = _model_text(args["path"], args)
+        if is_err:
+            return {"isError": True, "content": [{"type": "text", "text": text}]}
+        body = json.loads(text)
+        if MODE in ("view", "view_error"):
+            body = {"normalized_result": {"parent_evidence_id": PARENT, "summary": body}, "confidence": "derived"}
+        return {"content": [{"type": "text", "text": json.dumps(body)}]}
+    if name == "inspect_analysis_view":
+        if MODE == "view_error":
+            return {"isError": True, "content": [{"type": "text", "text": "view unavailable"}]}
+        src = args.get("source") or {}
+        rows = {"kind": "summary", "collection": "metadata", "parent_evidence_id": src.get("evidence_id"),
+                "rows": [{"key": "general.architecture", "value": "llama"}, {"key": "general.name", "value": "TinyLlama"}]}
+        return {"content": [{"type": "text", "text": json.dumps(rows)}]}
     return {"isError": True, "content": [{"type": "text", "text": "unexpected tool " + name}]}
 
 

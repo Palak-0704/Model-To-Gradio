@@ -1462,23 +1462,55 @@ def _rea_side(rea: Any) -> Dict[str, Any]:
     if not isinstance(rea, dict):
         return {"status": "not_invoked", "reason": "No REA result is attached to this analysis.", "usable": False, "coverage": "none",
                 "files_inspected": 0, "files_total": 0, "server": {}, "tools_executed": [], "files": [], "findings": [],
-                "errors": []}
+                "weight_formats": [], "errors": []}
     calls = [c for c in rea.get("calls") or [] if isinstance(c, dict)]
     ok_targets = {c.get("target") for c in calls if c.get("tool") == "inspect_model_artifact" and c.get("ok") is True}
-    files = [{k: s.get(k) for k in ("file", "tensor_count", "parameters", "dtypes", "data_bytes", "logical_size")}
+    files = [{k: s.get(k) for k in ("file", "tensor_count", "parameters", "dtypes", "data_bytes", "logical_size",
+                                    "format", "gguf_version", "architecture", "has_chat_template", "header_bytes")}
              for s in rea.get("header_summaries") or [] if isinstance(s, dict) and s.get("file") in ok_targets]
     status = str(rea.get("status") or "not_invoked")[:40]
     usable = status in ("completed", "partial") and bool(files)
     coverage = "none" if not usable else ("complete" if status == "completed" else "partial")
+    formats = sorted({str(f.get("format")) for f in files if f.get("format")})
     return {
         "status": status, "reason": str(rea.get("reason") or "")[:300], "usable": usable, "coverage": coverage,
         "files_inspected": _as_int(rea.get("shards_inspected")) or 0, "files_total": _as_int(rea.get("shards_total")) or 0,
         "server": rea.get("server") if isinstance(rea.get("server"), dict) else {},
         "tools_executed": [c.get("tool") for c in calls],
         "files": files,
+        "weight_formats": formats,
         "findings": [str(f)[:300] for f in (rea.get("findings") or [])[:6]],
         "errors": [str(c.get("error"))[:200] for c in calls if c.get("error")][:3],
     }
+
+
+def _rea_weight_format_section(a: Analysis, side: Dict[str, Any]) -> Tuple[Dict[str, Any], List[str], List[Dict[str, Any]]]:
+    """REA's weight-file findings beyond the parameter count: the format(s) it actually read, and - for GGUF - the architecture
+    the file itself declares. Additive evidence only; the Python task/status is never changed. Returns (section, warnings, conflicts)."""
+    section: Dict[str, Any] = {"formats": list(side.get("weight_formats") or []), "files": []}
+    warnings: List[str] = []
+    conflicts: List[Dict[str, Any]] = []
+    py_arch = None
+    cfg = (a.model_evidence or {}).get("config") if isinstance(a.model_evidence, dict) else None
+    if isinstance(cfg, dict) and isinstance(cfg.get("architectures"), list) and cfg["architectures"]:
+        py_arch = str(cfg["architectures"][0])
+    for f in side.get("files") or []:
+        entry = {"file": f.get("file"), "format": f.get("format"), "header_bytes": _as_int(f.get("header_bytes")),
+                 "tensor_count": _as_int(f.get("tensor_count"))}
+        declared_arch = f.get("architecture") if isinstance(f.get("architecture"), str) and f.get("architecture") else None
+        if declared_arch:
+            entry["declared_architecture"] = declared_arch
+            entry["declared_chat_template"] = bool(f.get("has_chat_template"))
+        section["files"].append(entry)
+        # GGUF's general.architecture is a coarse family name (e.g. "llama"), not a transformers class; a mismatch is only worth a
+        # note, never a conflict, because the two vocabularies are different.
+        if declared_arch and py_arch and declared_arch.lower() not in py_arch.lower() and py_arch.lower() not in declared_arch.lower():
+            warnings.append(f"REA read a GGUF file that declares architecture '{declared_arch}', while config.json declares "
+                            f"'{py_arch}'; the file and the config may describe different models.")
+    if side.get("usable") and "gguf" in (side.get("weight_formats") or []):
+        warnings.append("REA inspected a GGUF weight file's header (declarations only): GGUF files are not loadable by this "
+                        "platform's generated transformers/diffusers apps, so this is analysis evidence only.")
+    return section, warnings, conflicts
 
 
 def _compare_parameters(a: Analysis, side: Dict[str, Any]) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
@@ -1541,9 +1573,11 @@ def build_combined_analysis(a: Analysis) -> Dict[str, Any]:
     side = _rea_side(a.rea)
     status = side["status"]
     comparison, conflicts = _compare_parameters(a, side)
+    weight_format, wf_warnings, wf_conflicts = _rea_weight_format_section(a, side)
+    conflicts = [*conflicts, *wf_conflicts]
     py_warnings = [w for w in a.warnings if not _is_rea_note(w)]
     py_uncertainties = [u for u in a.uncertainties if not _is_rea_note(u)]
-    rea_warnings: List[str] = []
+    rea_warnings: List[str] = list(wf_warnings)
     rea_uncertainties: List[str] = []
     recs: List[str] = []
     reason = side["reason"]
@@ -1614,6 +1648,7 @@ def build_combined_analysis(a: Analysis) -> Dict[str, Any]:
         },
         "rea_analysis": side,
         "parameter_comparison": comparison,
+        "weight_format": weight_format,
         "conflicts": conflicts,
         "confidence": {"task": a.task_confidence, "task_basis": "python_analyzer only",
                        "parameter_count": levels.get(comparison["verdict"], "unknown"), "rea_coverage": side["coverage"]},

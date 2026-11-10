@@ -2,27 +2,34 @@
 
 Pipeline position:  Hugging Face URL -> metadata inspection -> **REA inspection (this module)** -> analysis -> OpenCode generation.
 
-What REA is used for here, and why only two tools
+What REA is used for here, and which tools
   The REA 6.8.0 server advertises 229 tools (schemas in ``diagnostics/rea_tools.md``). Almost all of them need a local binary,
-  a device, a debugger or a browser session. Only these two fit "safely inspect a model without running anything":
+  a device, a debugger or a browser session. The ones used here fit "safely inspect a model without running anything":
 
   * ``binary_session``          no arguments; reports server identity/status without starting any analysis (health check).
   * ``inspect_model_artifact``  ``path`` (a LOCAL file, never a URL), ``hash`` ("header" = declarations only, never "full"),
                                 ``detail``. Reads GGUF/safetensors declarations without loading models, executing code,
                                 using the network or deserializing pickle.
+  * ``inspect_analysis_view``   pages REA's RETAINED Evidence from the model inspection just performed (for example the
+                                ``metadata`` collection of a GGUF file: ``general.architecture`` and friends). It is called only
+                                when the model-inspection result advertises a retained ``parent_evidence_id``; it reads no bytes
+                                from disk and reopens nothing.
 
 How a header-only inspection works (sparse files)
   ``inspect_model_artifact`` validates the tensor offsets declared in the header against the file's LOGICAL size, so a file that
   holds only the header is rejected ("offsets outside the file"). The platform therefore:
 
-    1. fetches ONLY the safetensors header with two HTTP range requests (8 length bytes, then the JSON header); the
-       ``Content-Range`` of those responses carries the real size of the remote file, which is validated, bounded and
-       cross-checked against the size the Hub listed;
-    2. validates the header locally (contiguous offsets, spans that match shape x dtype, declared data == file size - header);
+    1. fetches ONLY the weight file's declarations with HTTP range requests (safetensors: 8 length bytes then the JSON header;
+       GGUF: a bounded, doubling window from the start until the tensor table is complete, then trimmed to the exact header end
+       using offsets the local parser reported). The ``Content-Range`` of every response carries the real size of the remote
+       file, which is validated, bounded and cross-checked against the size the Hub listed;
+    2. validates the header locally (safetensors: contiguous offsets, spans that match shape x dtype, declared data == file
+       size - header; GGUF: magic, version, KV block and tensor table);
     3. creates a genuine SPARSE scratch file (NTFS ``FSCTL_SET_SPARSE``), writes the header into it and sets the logical size to
        the remote size. The tensor region is a hole: nothing is downloaded and (verified by measuring the allocation) no disk
        space is used;
-    4. lets REA inspect that file with ``hash="header"``, then deletes it.
+    4. lets REA inspect that file with ``hash="header"`` (and, when it offers a retained evidence id, pages its metadata view),
+       then deletes it.
 
   If the filesystem does not give a really sparse file, the stage reports ``not_applicable`` and no REA tool is called.
   Any other REA tool is refused by the client even if the caller asks for it.
@@ -73,13 +80,16 @@ CLIENT_INFO = {"name": "model-to-gradio", "version": "0.1"}
 
 HEALTH_TOOL = "binary_session"
 MODEL_TOOL = "inspect_model_artifact"
-ALLOWED_TOOLS = (HEALTH_TOOL, MODEL_TOOL)
+VIEW_TOOL = "inspect_analysis_view"
+ALLOWED_TOOLS = (HEALTH_TOOL, MODEL_TOOL, VIEW_TOOL)
 # Arguments are fixed by the platform. "header" reads declarations only ("full" would stream every byte of the file);
 # "summary" is the detail level the tool documents for retained evidence. Both values come from the advertised schema text.
 FIXED_ARGS: Dict[str, Dict[str, Any]] = {HEALTH_TOOL: {}, MODEL_TOOL: {"hash": "header", "detail": "summary"}}
 
 MAX_SHARDS = 3  # at most this many weight files are header-inspected per model
 MAX_HEADER_BYTES = 8 * 1024 * 1024  # our own ceiling; REA's is 100 MB
+MAX_GGUF_WINDOW_BYTES = 8 * 1024 * 1024  # largest GGUF header window we will fetch (doubling stops here)
+MAX_VIEW_ROWS = 64  # rows requested from one inspect_analysis_view metadata page
 MAX_REMOTE_FILE_BYTES = 1 << 40  # 1 TiB: a remote size above this is treated as a lie, never as a sparse-file length
 MAX_OUTPUT_CHARS = 8_000  # stored per tool result
 INIT_TIMEOUT_S = 90.0
@@ -457,16 +467,7 @@ def fetch_safetensors_header(fetcher: SafeFetcher, repo_id: str, revision: str, 
     url = f"https://huggingface.co/{repo_id}/resolve/{revision}/{urllib.parse.quote(_safe_repo_file(filename))}"
 
     def get(start: int, end: int) -> Tuple[bytes, int]:
-        want = end - start + 1
-        res = fetcher.fetch(url, {"Range": f"bytes={start}-{end}"}, max_bytes=want + 64)
-        if stats is not None:
-            stats["requests"] = stats.get("requests", 0) + 1
-            stats["bytes"] = stats.get("bytes", 0) + len(res.body)
-        if res.status != 206:
-            raise ReaError(f"The server did not honour the range request for bytes {start}-{end} (HTTP {res.status}).")
-        if len(res.body) != want:
-            raise ReaError(f"The server returned {len(res.body)} bytes for a {want}-byte range request.")
-        return res.body, _content_range_total(res.headers, start, end)
+        return _range_get(fetcher, url, start, end, stats)
 
     prefix, total = get(0, 7)
     n = int.from_bytes(prefix, "little")
@@ -541,6 +542,114 @@ def summarize_header(blob: bytes, total_size: Optional[int] = None) -> Dict[str,
                            "its header.")
     return {"header_bytes": n, "tensor_count": count, "parameters": total, "dtypes": dict(sorted(dtypes.items())),
             "data_bytes": cursor}
+
+
+def _range_get(fetcher: SafeFetcher, url: str, start: int, end: int, stats: Optional[Dict[str, int]] = None) -> Tuple[bytes, int]:
+    """One HTTP range request: returns (body, total file size from a validated Content-Range). Records stats when given."""
+    want = end - start + 1
+    res = fetcher.fetch(url, {"Range": f"bytes={start}-{end}"}, max_bytes=want + 64)
+    if stats is not None:
+        stats["requests"] = stats.get("requests", 0) + 1
+        stats["bytes"] = stats.get("bytes", 0) + len(res.body)
+    if res.status != 206:
+        raise ReaError(f"The server did not honour the range request for bytes {start}-{end} (HTTP {res.status}).")
+    if len(res.body) != want:
+        raise ReaError(f"The server returned {len(res.body)} bytes for a {want}-byte range request.")
+    return res.body, _content_range_total(res.headers, start, end)
+
+
+def _repo_resolve_url(repo_id: str, revision: str, filename: str) -> str:
+    validate_repo_id(repo_id)
+    validate_revision(revision)
+    return f"https://huggingface.co/{repo_id}/resolve/{revision}/{urllib.parse.quote(_safe_repo_file(filename))}"
+
+
+def fetch_gguf_header(fetcher: SafeFetcher, repo_id: str, revision: str, filename: str, *,
+                      expected_size: Optional[int] = None, stats: Optional[Dict[str, int]] = None) -> RemoteHeader:
+    """The GGUF header (magic + KV block + tensor table + alignment padding) and the file's real size, using bounded HTTP range
+    requests. The window doubles (1 MiB, 2 MiB, 4 MiB, 8 MiB) until the local parser reports the tensor table complete; the exact
+    header extent is then trimmed with one more request, so no tensor data is ever requested. ``expected_size`` (the Hub-listed
+    size) must agree with the Content-Range total."""
+    from .evidence.repo_inspectors import inspect_gguf  # local import: keeps this module's import graph acyclic
+
+    url = _repo_resolve_url(repo_id, revision, filename)
+    first, total = _range_get(fetcher, url, 0, 0, stats)  # one byte first: cheap Content-Range to learn the real size
+    if expected_size is not None and expected_size != total:
+        raise ReaError(f"The remote file is {total} bytes, but the Hub listed {expected_size} bytes; refusing to trust either.")
+    window = min(1 << 20, total)
+    while True:
+        end = min(window, total) - 1
+        blob = first + _range_get(fetcher, url, 1, end, stats)[0]
+        if len(blob) != min(window, total):
+            raise ReaError("The GGUF header window is shorter than requested.")
+        info = inspect_gguf(blob, total)
+        if info.get("parse_error") and not info.get("version"):
+            raise ReaError(f"The GGUF header could not be parsed: {info['parse_error']}.")
+        if info.get("complete"):
+            end_off = info.get("header_end_offset")
+            if not isinstance(end_off, int) or end_off < 0:
+                raise ReaError("The GGUF parser did not report where its tensor data begins.")
+            if end_off > total:
+                raise ReaError("The GGUF header declares tensor data beyond the end of the file.")
+            if end_off > len(blob):  # alignment padding reached past the window: fetch exactly up to the header end
+                if end_off > MAX_GGUF_WINDOW_BYTES:
+                    raise ReaError(f"The GGUF header extent ({end_off} bytes) exceeds the {MAX_GGUF_WINDOW_BYTES}-byte window limit.")
+                blob = first + _range_get(fetcher, url, 1, end_off - 1, stats)[0]
+            return RemoteHeader(blob[:end_off], total)
+        if window >= min(MAX_GGUF_WINDOW_BYTES, total):
+            raise ReaError(f"The GGUF tensor table did not fit the {MAX_GGUF_WINDOW_BYTES}-byte header window.")
+        window *= 2
+
+
+def summarize_gguf(blob: bytes, total_size: Optional[int] = None) -> Dict[str, Any]:
+    """Validate a fetched GGUF header and turn it into the same fact shape ``summarize_header`` returns for safetensors
+    (``tensor_count``, ``parameters``, ``dtypes``) plus the GGUF-specific architecture and tensor-type counts. The local parser
+    never executes code and never reads tensor data."""
+    from .evidence.repo_inspectors import inspect_gguf  # local import: keeps this module's import graph acyclic
+
+    info = inspect_gguf(blob, total_size)
+    if info.get("parse_error") and not info.get("version"):
+        raise ReaError(f"The GGUF header could not be parsed: {info['parse_error']}.")
+    if not info.get("complete"):
+        raise ReaError("The GGUF header is not complete in the bytes that were read.")
+    end = info.get("header_end_offset")
+    if not isinstance(end, int) or not 4 <= end <= len(blob):
+        raise ReaError("The GGUF header extent does not match the bytes that were read.")
+    if total_size is not None and end > total_size:
+        raise ReaError("The GGUF header declares tensor data beyond the end of the file.")
+    types = info.get("tensor_types") if isinstance(info.get("tensor_types"), dict) else {}
+    return {"header_bytes": end, "tensor_count": int(info.get("tensor_count") or 0),
+            "parameters": int(info.get("parameters") or 0), "dtypes": dict(sorted(types.items())),
+            "data_bytes": max(0, (total_size or 0) - end), "format": "gguf", "gguf_version": info.get("version"),
+            "architecture": info.get("architecture"), "has_chat_template": bool(info.get("has_chat_template"))}
+
+
+# --------------------------------------------------------------------------- weight-format registry
+
+@dataclass(frozen=True)
+class WeightFormat:
+    """One weight format the REA stage can header-inspect without downloading tensor data."""
+
+    suffix: str
+    fetch: Callable[..., RemoteHeader]
+    summarize: Callable[[bytes, Optional[int]], Dict[str, Any]]
+
+
+WEIGHT_FORMATS: Dict[str, WeightFormat] = {
+    ".safetensors": WeightFormat(".safetensors", fetch_safetensors_header, summarize_header),
+    ".gguf": WeightFormat(".gguf", fetch_gguf_header, summarize_gguf),
+}
+
+
+def register_weight_format(suffix: str, fetch: Callable[..., RemoteHeader],
+                           summarize: Callable[[bytes, Optional[int]], Dict[str, Any]]) -> None:
+    """Add a header-only weight format. Only formats listed here are ever inspected by the REA stage."""
+    WEIGHT_FORMATS[suffix.lower()] = WeightFormat(suffix.lower(), fetch, summarize)
+
+
+def _weight_suffix(name: str) -> Optional[str]:
+    low = name.lower()
+    return next((s for s in sorted(WEIGHT_FORMATS, key=len, reverse=True) if low.endswith(s)), None)
 
 
 # --------------------------------------------------------------------------- sparse scratch files
@@ -701,17 +810,34 @@ def _inspectable_model(info: Any) -> Tuple[Optional[Any], str]:
     return info, ""
 
 
-def plan_targets(info: Any) -> Tuple[Optional[Any], List[str], int, str]:
-    """(model_info, safetensors file names to inspect (<= MAX_SHARDS), total safetensors files, not-applicable reason)."""
+def plan_targets(info: Any) -> Tuple[Optional[Any], List[Tuple[str, "WeightFormat"]], int, str]:
+    """(model_info, [(file name, WeightFormat)] to inspect (<= MAX_SHARDS), total inspectable weight files, not-applicable reason)."""
     model, why = _inspectable_model(info)
     if model is None:
         return None, [], 0, why
-    names = sorted((n for n, _ in model.files if n.lower().endswith(".safetensors")), key=lambda n: (n.count("/"), n))
-    if not names:
-        other = [lbl for lbl, present in (("GGUF", model.has_gguf), ("pickle", model.has_pickle_weights), ("ONNX", model.has_onnx)) if present]
-        extra = f" (found {', '.join(other)} weights; header-only inspection is implemented for safetensors only)" if other else ""
-        return None, [], 0, "The model has no .safetensors weight file for REA to inspect" + extra + "."
-    return model, names[:MAX_SHARDS], len(names), ""
+    targets = [(n, WEIGHT_FORMATS[_weight_suffix(n)]) for n, _ in sorted(model.files, key=lambda e: (e[0].count("/"), e[0]))
+               if _weight_suffix(n) is not None]
+    if not targets:
+        other = [lbl for lbl, present in (("pickle", model.has_pickle_weights), ("ONNX", model.has_onnx)) if present]
+        extra = (f" (found {', '.join(other)} weights; header-only inspection is implemented for "
+                 f"{', '.join(sorted(WEIGHT_FORMATS))} only)") if other else ""
+        return None, [], 0, ("The model has no weight file in a format REA can header-inspect" + extra + ".")
+    return model, targets[:MAX_SHARDS], len(targets), ""
+
+
+def _parent_evidence_id(call: ReaToolCall) -> Optional[str]:
+    """The retained Evidence id a model-inspection result advertises for deeper pages, or None when it carries none."""
+    try:
+        obj = json.loads(call.output or "")
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(obj, dict):
+        return None
+    nr = obj.get("normalized_result")
+    for candidate in ((nr or {}).get("parent_evidence_id") if isinstance(nr, dict) else None, obj.get("parent_evidence_id")):
+        if isinstance(candidate, str) and candidate.startswith("ev_"):
+            return candidate
+    return None
 
 
 # --------------------------------------------------------------------------- the inspection stage
@@ -738,11 +864,12 @@ def run_rea_inspection(info: Any, fetcher: SafeFetcher, settings: Optional[Setti
 
 def _run(rep: ReaReport, info: Any, fetcher: SafeFetcher, command: Optional[Sequence[str]], project_dir: Path,
          client_factory: Callable[..., ReaMcpClient], health_cache: Optional[HealthCache]) -> ReaReport:
-    model, names, total, why = plan_targets(info)
+    model, targets, total, why = plan_targets(info)
     if model is None:
         rep.note("No REA tool was called: nothing to inspect.")
         return _finish(rep, NOT_APPLICABLE, why)
     rep.shards_total = total
+    names = [n for n, _ in targets]
     pin = model.revision_sha or model.source.revision or "main"
     try:
         validate_revision(pin)
@@ -750,7 +877,7 @@ def _run(rep: ReaReport, info: Any, fetcher: SafeFetcher, command: Optional[Sequ
         pin = "main"
     repo_id = model.source.repo_id
     listed_sizes = dict(model.files)
-    rep.note(f"Plan: header-only inspection of {len(names)} of {total} safetensors file(s) in {repo_id}@{pin[:12]} "
+    rep.note(f"Plan: header-only inspection of {len(names)} of {total} weight file(s) in {repo_id}@{pin[:12]} "
              f"with REA tools {list(ALLOWED_TOOLS)}.")
 
     # Cheapest failures first: the launcher is checked before any network request is made.
@@ -776,15 +903,15 @@ def _run(rep: ReaReport, info: Any, fetcher: SafeFetcher, command: Optional[Sequ
         files: List[Tuple[str, Path]] = []
         stats: Dict[str, int] = {}
         header_failures = sparse_failures = 0
-        for i, name in enumerate(names):
+        for i, (name, fmt) in enumerate(targets):
             try:
-                remote = fetch_safetensors_header(fetcher, repo_id, pin, name, expected_size=listed_sizes.get(name), stats=stats)
-                summary = summarize_header(remote.blob, remote.total_size)
+                remote = fmt.fetch(fetcher, repo_id, pin, name, expected_size=listed_sizes.get(name), stats=stats)
+                summary = fmt.summarize(remote.blob, remote.total_size)
             except (FetchError, SecurityError, ReaError) as exc:
                 header_failures += 1
                 rep.note(f"Header of {name} could not be used: {type(exc).__name__}: {exc}")
                 continue
-            path = ensure_within(project_dir, scratch / f"shard_{i}.safetensors")
+            path = ensure_within(project_dir, scratch / f"shard_{i}{fmt.suffix}")
             try:
                 allocated = create_sparse_file(path, remote.blob, remote.total_size)
             except SparseFileError as exc:
@@ -800,9 +927,9 @@ def _run(rep: ReaReport, info: Any, fetcher: SafeFetcher, command: Optional[Sequ
         rep.note(f"Downloaded {rep.bytes_downloaded:,} bytes in {rep.http_requests} range request(s).")
         if not files:
             if sparse_failures and not header_failures:
-                return _finish(rep, NOT_APPLICABLE, "No sparse scratch file could be created for the safetensors headers, so no REA "
+                return _finish(rep, NOT_APPLICABLE, "No sparse scratch file could be created for the weight-file headers, so no REA "
                                "inspection tool was called.")
-            return _finish(rep, FAILED, "No usable safetensors header could be fetched, so no REA inspection tool was called.")
+            return _finish(rep, FAILED, "No usable weight-file header could be fetched, so no REA inspection tool was called.")
 
         key = tuple(launcher)
         use_cached = health_cache is not None and health_cache.is_fresh(key)
@@ -819,7 +946,7 @@ def _run(rep: ReaReport, info: Any, fetcher: SafeFetcher, command: Optional[Sequ
                 tools = client.list_tools()
                 rep.tools_discovered = len(tools)
                 rep.note(f"tools/list: {len(tools)} tools advertised")
-                missing = [t for t in ALLOWED_TOOLS if t not in tools]
+                missing = [t for t in (HEALTH_TOOL, MODEL_TOOL) if t not in tools]
                 if missing:
                     return _finish(rep, FAILED, f"This REA server does not advertise the required tool(s) {missing}; none was called.")
                 for tool, args, target in planned:
@@ -829,6 +956,10 @@ def _run(rep: ReaReport, info: Any, fetcher: SafeFetcher, command: Optional[Sequ
                         call = ReaToolCall(tool=tool, arguments=args, ok=False, target=target, error=f"not sent: {exc}")
                     rep.calls.append(call)
                     rep.note(f"tools/call {tool} [{target}] -> {'ok' if call.ok else 'FAILED: ' + str(call.error)[:160]} ({call.duration_s}s)")
+                # Deeper retained-Evidence pages are OPTIONAL: they add facts (e.g. a GGUF file's declared architecture) but a
+                # failure never changes the verdict, because the model inspection itself already succeeded.
+                if VIEW_TOOL in tools:
+                    _page_retained_metadata(rep, client)
         except ReaError as exc:
             rep.note(f"REA transport/protocol problem: {exc}")
             if health_cache is not None:
@@ -837,7 +968,7 @@ def _run(rep: ReaReport, info: Any, fetcher: SafeFetcher, command: Optional[Sequ
                 return _finish(rep, FAILED, f"REA could not complete the inspection: {exc}")
             rep.note("Calls made before the problem are kept.")
         if health_cache is not None:  # a cached health result is only trusted while every call keeps succeeding
-            if any(not c.ok for c in rep.calls):
+            if any(not c.ok for c in rep.calls if c.tool in (HEALTH_TOOL, MODEL_TOOL)):
                 health_cache.invalidate(key)
             elif any(c.tool == HEALTH_TOOL and c.ok for c in rep.calls):
                 health_cache.record(key)
@@ -850,22 +981,50 @@ def _run(rep: ReaReport, info: Any, fetcher: SafeFetcher, command: Optional[Sequ
     ok_names = {c.target for c in ok_models}
     for s in rep.header_summaries:
         if s["file"] in ok_names:
-            rep.findings.append(f"{s['file']}: {s['tensor_count']} tensors, {s['parameters']:,} parameters, dtypes "
+            arch = f", architecture {s['architecture']}" if s.get("architecture") else ""
+            rep.findings.append(f"{s['file']}: {s['tensor_count']} tensors, {s['parameters']:,} parameters{arch}, dtypes "
                                 + (", ".join(f"{k} ({v:,})" for k, v in s["dtypes"].items()) or "none") + " (REA read this header).")
     if not ok_models:
         first_err = next((c.error for c in rep.calls if c.tool == MODEL_TOOL and c.error), "no model inspection call was made")
         return _finish(rep, FAILED, f"REA did not inspect any model file: {first_err}")
     health_ok = use_cached or any(c.tool == HEALTH_TOOL and c.ok for c in rep.calls)
     if health_ok and len(ok_models) == len(names) == len(files) and rep.shards_total == len(names):
-        return _finish(rep, COMPLETED, f"REA inspected the header of all {len(names)} safetensors file(s).")
+        return _finish(rep, COMPLETED, f"REA inspected the header of all {len(names)} weight file(s).")
     problems = []
     if not health_ok:
         problems.append("the status check failed")
     if len(ok_models) < len(names):
         problems.append(f"{len(ok_models)} of {len(names)} planned file(s) inspected")
     if rep.shards_total > len(names):
-        problems.append(f"only the first {len(names)} of {rep.shards_total} safetensors files were inspected")
+        problems.append(f"only the first {len(names)} of {rep.shards_total} weight files were inspected")
     return _finish(rep, PARTIAL, "REA inspected part of the model: " + "; ".join(problems) + ".")
+
+
+def _page_retained_metadata(rep: ReaReport, client: ReaMcpClient) -> int:
+    """Best-effort deeper page of REA's retained Evidence for each inspected file (e.g. a GGUF file's declared metadata).
+
+    The model-inspection call already returned a retained ``parent_evidence_id``; ``inspect_analysis_view`` pages it. A call that
+    the server refuses, that returns no id, or that fails is recorded and noted but never changes the stage's status: the header
+    inspection is the contract, this only adds facts. Returns the number of view calls made."""
+    made = 0
+    model_calls = [c for c in rep.calls if c.tool == MODEL_TOOL and c.ok]
+    for call in model_calls[:MAX_SHARDS]:
+        parent = _parent_evidence_id(call)
+        if not parent:
+            continue
+        args = {"source": {"kind": "retained-evidence", "evidence_id": parent},
+                "view": {"kind": "model-artifact", "collection": "metadata", "offset": 0, "limit": MAX_VIEW_ROWS}}
+        try:
+            view = client.call_tool(VIEW_TOOL, args, target=call.target)
+        except ReaError as exc:  # not sent (schema/allow-list): record but do not fail the stage
+            view = ReaToolCall(tool=VIEW_TOOL, arguments=args, ok=False, target=call.target, error=f"not sent: {exc}")
+        rep.calls.append(view)
+        made += 1
+        rep.note(f"tools/call {VIEW_TOOL} [{call.target}] -> {'ok' if view.ok else 'FAILED (optional): ' + str(view.error)[:120]} "
+                 f"({view.duration_s}s)")
+    if made:
+        rep.note(f"Retained-Evidence metadata pages requested for {made} file(s); these are optional and do not affect the status.")
+    return made
 
 
 def make_runner(settings: Optional[Settings] = None, *, command: Optional[Sequence[str]] = None,

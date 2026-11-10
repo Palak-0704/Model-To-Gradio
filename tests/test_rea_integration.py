@@ -127,7 +127,8 @@ class TestClient(Base):
     def test_initialize_discovery_pagination_and_allowlist(self):
         with rc.ReaMcpClient(CMD, cwd=self.tmp) as client:
             self.assertEqual((client.server_info["name"], client.server_info["version"]), ("rea", "6.8.0"))
-            self.assertEqual(sorted(client.list_tools()), ["binary_session", "gdb_console", "inspect_model_artifact", "open_binary"])
+            self.assertEqual(sorted(client.list_tools()), ["binary_session", "gdb_console", "inspect_analysis_view",
+                                                            "inspect_model_artifact", "open_binary"])
             for tool, args in (("open_binary", {"path": "x"}), ("gdb_console", {"command": "x"})):
                 with self.assertRaises(rc.ReaError):  # advertised by the server but not on the platform's allow-list
                     client.call_tool(tool, args)
@@ -143,7 +144,7 @@ class TestClient(Base):
 
 
 class TestRunInspection(Base):
-    def test_completed_executes_exactly_the_two_allowed_tools(self):
+    def test_completed_executes_exactly_the_required_tools(self):
         report, web_ = self.run_rea()
         self.assertEqual(report.status, rc.COMPLETED, report.log)
         self.assertEqual(report.tools_invoked, ["binary_session", "inspect_model_artifact"])
@@ -152,7 +153,7 @@ class TestRunInspection(Base):
         args = sent[1]["arguments"]
         self.assertEqual(set(args), {"path", "hash", "detail"})
         self.assertEqual((args["hash"], args["detail"]), ("header", "summary"))  # never hash=full
-        self.assertEqual((report.server["name"], report.server["version"], report.tools_discovered), ("rea", "6.8.0", 4))
+        self.assertEqual((report.server["name"], report.server["version"], report.tools_discovered), ("rea", "6.8.0", 5))
         self.assertTrue(all(c.ok and c.output for c in report.calls))
         self.assertEqual(report.header_summaries[0]["parameters"], 10)
         self.assertEqual(report.header_summaries[0]["tensor_count"], 2)

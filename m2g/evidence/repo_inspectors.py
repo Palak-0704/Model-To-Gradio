@@ -509,7 +509,11 @@ def _gguf_value(r: _Reader, t: int, wide: bool) -> Any:
 
 
 def inspect_gguf(buf: bytes, total_size: Optional[int]) -> Dict[str, Any]:
-    """Parse a GGUF header (metadata + tensor table) from the leading bytes of the file; ``complete`` is False when the window ended early."""
+    """Parse a GGUF header (metadata + tensor table) from the leading bytes of the file.
+
+    ``complete`` is False when the read window ended early (caller should fetch a larger window). When the tensor table is
+    complete, ``header_end_offset`` is the exact byte offset where the (aligned) tensor data begins, ``data_offset`` is the
+    alignment the file declares and ``parameters`` is the total element count of the tensor table."""
     r = _Reader(buf)
     out: Dict[str, Any] = {}
     try:
@@ -532,16 +536,25 @@ def inspect_gguf(buf: bytes, total_size: Optional[int]) -> Dict[str, Any]:
             out["architecture"] = meta.get("general.architecture")
             out["has_tokenizer"] = any(k.startswith("tokenizer.") for k in meta)
             out["has_chat_template"] = "tokenizer.chat_template" in meta
-            types, patterns = {}, {}
+            types, patterns, params = {}, {}, 0
             for _ in range(tcount):
                 name, nd = r.string(wide), r.unpack("<I")
                 dims = [r.unpack("<Q" if wide else "<I") for _ in range(nd)]
                 gt, _off = r.unpack("<I"), r.unpack("<Q")
                 label = _GGML.get(gt, f"type_{gt}")
                 types[label] = types.get(label, 0) + 1
+                n = 1
+                for d in dims:
+                    n *= max(d, 0)
+                params += n
                 p = patterns.setdefault(_pattern(name), {"count": 0, "dtype": label, "example_shape": dims[:6], "example": name[:100]})
                 p["count"] += 1
-            out.update({"tensor_types": types, "name_patterns": sorted(patterns.values(), key=lambda p: -p["count"])[:60]})
+            out.update({"tensor_types": types, "name_patterns": sorted(patterns.values(), key=lambda p: -p["count"])[:60],
+                        "parameters": params})
+            align = meta.get("general.alignment")
+            align = align if isinstance(align, int) and 0 < align <= 1 << 20 else 32
+            out["data_offset"] = align
+            out["header_end_offset"] = (r.i + align - 1) // align * align
         except _Short:
             complete = False
         out["complete"] = complete
