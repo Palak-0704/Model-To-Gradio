@@ -6,10 +6,10 @@ model. The generated app is an honest scaffold: it never loads weights, never ru
 Everything runs offline against the fake transport in fakehub.py: no network, no weights, no repository code. The scaffold is executed
 in-process ONLY inside ``run_scaffold`` (a stub ``gradio`` module, sockets and subprocesses blocked) to observe what its own code does.
 
-NOTE: ``inspector._inspect_github`` does not currently fill ``RepoInfo.config`` / ``config_paths`` / ``release_assets`` from a GitHub
-repository (the fields and ``GH_MODEL_CONFIG_FILES`` exist, nothing populates them). Tests that need a model config or a release asset
-therefore set those fields on the ``RepoInfo`` with ``dataclasses.replace`` and exercise the analyzer on them; the tests that go through
-the real inspector rely on weight files in the repository tree plus a declared / imported ML framework.
+NOTE: ``inspector._inspect_github_model_configs`` reads a repository's own ``config.json`` (bounded, as data) into
+``RepoInfo.config`` / ``config_paths``. Tests that need a config the repository does not actually contain still set those fields with
+``dataclasses.replace`` and exercise the analyzer on them; tests that go through the real inspector rely on the tree plus a declared /
+imported ML framework.
 """
 import ast
 import dataclasses
@@ -213,7 +213,33 @@ class TestNativeEligibility(unittest.TestCase):
         self.assertTrue(any("inference API" in u for u in n["unknown"]), n["unknown"])
         self.assertFalse(a.inputs or a.outputs)
 
-    def test_model_config_plus_a_framework_qualifies_without_weights(self):
+    def test_a_repositorys_own_config_architecture_sets_the_native_task(self):
+        # The repository's own config.json is structural evidence: a recognised head establishes the task and modalities even when the
+        # README says nothing (no keyword can outrank a declared architecture, and none is invented from the model's name).
+        web, url, info = native_info(readme="# Acme\nA small model project.\n",
+                                     tree=["README.md", "requirements.txt", "main.py", "config.json", "model.safetensors"],
+                                     extra_files={"config.json": json.dumps({"model_type": "whisper",
+                                                                             "architectures": ["WhisperForConditionalGeneration"]})})
+        a = an.analyze(info)
+        self.assertEqual(a.task, "automatic-speech-recognition")
+        self.assertEqual((a.input_modalities, a.output_modalities), (["audio"], ["text"]))
+        self.assertTrue(any(e.signal == "architecture" and e.tier == "structural" for e in a.task_evidence))
+        model = a.combined_analysis["model"]
+        self.assertEqual(model["architecture"]["model_type"], "whisper")
+        self.assertEqual(model["architecture"]["architectures"], ["WhisperForConditionalGeneration"])
+        self.assertEqual(model["classification"]["origin"], "github-native")
+
+    def test_a_generic_or_unknown_config_head_does_not_invent_a_task(self):
+        # A bare *Model head (feature-extraction) is weak; an unrecognised head yields no task at all rather than a guessed one.
+        _, _, info = native_info()
+        a = an.analyze(with_config(info, {"model_type": "netzero", "architectures": ["NetZeroModel"]}))
+        self.assertEqual(a.task, "feature-extraction")  # the generic head maps, but only weakly
+        _, _, info2 = native_info()
+        a2 = an.analyze(with_config(info2, {"model_type": "mystery", "architectures": ["MysteryForSomethingNew"]}))
+        self.assertIsNone(a2.task)
+        self.assertIsNone(a2.combined_analysis["model"]["architecture"]["model_type"])  # not read back from the unknown config
+
+    def test_a_declared_architecture_is_confirmed_but_the_inference_contract_stays_unknown(self):
         _, _, info = native_info(tree=["README.md", "requirements.txt", "main.py"])
         a = an.analyze(with_config(info, {"architectures": ["NetZero"]}))
         self.assertTrue(a.generatable, (a.status, a.reasons, a.native["missing"]))

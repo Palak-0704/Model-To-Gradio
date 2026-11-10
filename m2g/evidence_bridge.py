@@ -62,10 +62,11 @@ class EvidenceContext:
 
 
 def _target(info: Any) -> Optional[Any]:
-    """The Hugging Face RepoInfo evidence describes: the model itself, or a GitHub repository's linked primary model."""
+    """The RepoInfo evidence describes: the model itself, or (for GitHub) the linked primary model, else the GitHub repo itself
+    (whose own config/README files are now collected)."""
     if info.source.kind == "huggingface":
         return info
-    return getattr(info, "primary_model_info", None)
+    return getattr(info, "primary_model_info", None) or info
 
 
 def _failed_bundle(info: Any, exc: BaseException, settings: Optional[Settings]) -> EvidenceBundle:
@@ -103,8 +104,10 @@ def fill_missing_metadata(info: Any, bundle: EvidenceBundle) -> List[Dict[str, A
     model = _target(info)
     if model is None:
         return []
-    pinned = getattr(model, "revision_sha", None)
-    if pinned and bundle.resolved_revision and pinned != bundle.resolved_revision:
+    pinned = getattr(model, "revision_sha", None) or getattr(model, "commit_sha", None)
+    # Only fill when the revision the evidence was read at is known AND is the one the inspection pinned: otherwise the two could
+    # describe different commits, so the value stays unknown rather than being guessed.
+    if not pinned or pinned != bundle.resolved_revision:
         return []
     filled: List[Dict[str, Any]] = []
     for attr, key in _FILLABLE:

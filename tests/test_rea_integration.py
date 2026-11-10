@@ -73,7 +73,7 @@ class RangeWeb(FakeWeb):
         return {"content-range": f"bytes {a}-{b}/{self.total}"}
 
     def __call__(self, parts, ips, headers, timeout, max_bytes):
-        if parts.path.endswith(".safetensors") and "/resolve/" in parts.path:
+        if parts.path.endswith(".safetensors") and ("/resolve/" in parts.path or parts.hostname == "raw.githubusercontent.com"):
             self.hits += 1
             if self.error is not None:
                 raise self.error
@@ -229,6 +229,19 @@ class TestRunInspection(Base):
         report, _ = self.run_rea(info=info)
         self.assertEqual(report.status, rc.NOT_APPLICABLE)
         self.assertEqual(report.calls, [])
+
+    def test_github_repo_with_its_own_weights_is_inspected_header_only(self):
+        # A GitHub repository with no linked Hugging Face model but its own safetensors file is a valid REA target: REA reads
+        # the header from raw.githubusercontent.com and never downloads tensor data.
+        info = RepoInfo(source=parse_source_url("https://github.com/acme/repo"), commit_sha=SHA,
+                        files=[("README.md", 10), ("model.safetensors", SIZE)])
+        report, web_ = self.run_rea(info=info)
+        self.assertEqual(report.status, rc.COMPLETED, report.log)
+        self.assertEqual(report.tools_invoked, ["binary_session", "inspect_model_artifact"])
+        self.assertEqual(report.header_summaries[0]["parameters"], 10)
+        self.assertTrue(web_.ranges, "the header must be read over range requests")
+        header_end = 8 + int.from_bytes(web_.blob[:8], "little")
+        self.assertLess(max(b for _, b in web_.ranges), header_end, "no tensor byte may be requested")
 
     def test_many_shards_are_partial(self):
         files = [(f"model-0000{i}-of-00005.safetensors", SIZE) for i in range(1, 6)]

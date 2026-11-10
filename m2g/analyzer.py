@@ -229,6 +229,12 @@ class Analysis:
     # Digest of what a github-native analysis rests on, kept in three honest classes: ``confirmed`` (observed in the repository
     # metadata), ``inferred`` (reasoned from that evidence) and ``unknown`` (could not be established; never assumed). Empty otherwise.
     native: Dict[str, Any] = field(default_factory=dict)
+    # Normalized, provider-neutral repository representation (m2g.repo_model.RepositoryModel.to_dict()): identity, revision, file /
+    # source / config / dependency / artifact inventories, coverage, gaps and missing evidence. None until analyze() builds it.
+    repository: Optional[Dict[str, Any]] = None
+    # Claim-level validation (m2g.claims.claims_report): one entry per conclusion with its supporting/contradicting evidence ids, an
+    # explicit status and a confidence derived only from the evidence. None until analyze() builds it.
+    claims: Optional[Dict[str, Any]] = None
 
     @property
     def model_ref(self) -> SourceRef:
@@ -841,6 +847,10 @@ _FRAMEWORK_ALIASES = {"torchvision": "torch", "torchaudio": "torch", "pytorch-li
                       "onnxruntime-gpu": "onnxruntime"}
 _LIBRARY_PRIORITY = [("transformers", "transformers"), ("diffusers", "diffusers"), ("PyTorch", "pytorch"),
                      ("TensorFlow", "tensorflow"), ("JAX", "jax"), ("Flax", "jax")]
+# Framework labels used by the deep source analysis (its framework names) mapped to the labels the Analyzer already uses.
+_FRAMEWORK_LABELS = {"transformers": "transformers", "diffusers": "diffusers", "sentence-transformers": "sentence-transformers",
+                     "pytorch": "PyTorch", "tensorflow": "TensorFlow", "onnxruntime": "ONNX Runtime", "peft": "PyTorch",
+                     "llama.cpp": "llama.cpp"}
 # Static modality hints, matched against class names, imported names, from_pretrained() classes/ids and top-level imports.
 _VISION_HINT = re.compile(r"clip|vision|siglip|image|resnet|convnext|swin|deit|dino|torchvision|^pil$|^cv2$|(?:^|[^a-z])vit(?:[^a-z]|$)")
 # Library imports alone do not establish a model input: soundfile/librosa/
@@ -1248,6 +1258,53 @@ def _gap_uncertainties(gaps: List[Dict[str, str]]) -> List[str]:
             "What it would show is unknown and is not assumed." for g in gaps]
 
 
+def _apply_source_analysis(a: Analysis, info: RepoInfo, fw_evidence: Dict[str, str]) -> None:
+    """Fold the deep repository-wide source analysis (``info.source_analysis``) into the analysis.
+
+    This only ever ADDS evidence: framework observations from real loading/inference calls, loading sites, entry points, the
+    static import/call graphs and an evidence-backed I/O contract digest go into ``a.ui_hints['source_analysis']``. Coverage
+    gaps and unresolved imports become uncertainties. Nothing here is executed, imported or assumed: when the analysis did not
+    run (Hugging Face repos, or a fetch that produced no modules) the function is a no-op."""
+    src = getattr(info, "source_analysis", None)
+    if src is None:
+        return
+    digest = src.to_dict()
+    # Keep the digest bounded: the full graphs can be large and the analysis.json must stay readable.
+    digest["call_edges"] = digest["call_edges"][:80]
+    digest["import_edges"] = digest["import_edges"][:80]
+    a.ui_hints["source_analysis"] = digest
+
+    # Frameworks the source really loads/invokes, with their own provenance.
+    for fw in src.frameworks:
+        if fw in a.frameworks:
+            continue
+        a.frameworks.append(fw)
+    for s in src.load_sites:
+        label = _FRAMEWORK_LABELS.get(s.framework, s.framework)
+        if label not in fw_evidence:
+            fw_evidence[label] = f"loading call {s.call} in {s.module}:{s.line}"
+
+    # Input/output modalities the code itself establishes (preprocessing calls, inference signatures).
+    io = src.io_contract or {}
+    if io.get("inputs"):
+        mods = sorted({i["modality"] for i in io["inputs"] if i.get("modality")})
+        if mods and not a.input_modalities:
+            a.input_modalities = mods
+    if io.get("outputs"):
+        mods = sorted({o["kind"] for o in io["outputs"] if o.get("kind")})
+        if mods and not a.output_modalities:
+            a.output_modalities = mods
+
+    cov = src.coverage or {}
+    if cov and not cov.get("complete", True):
+        a.uncertainties.append(f"Source analysis covered {cov.get('modules_analysed', 0)} of {cov.get('modules_listed', 0)} listed "
+                               f"module(s); {cov.get('modules_not_analysed', 0)} were not analysed (budget or unreadable).")
+    for u in src.unresolved_imports[:4]:
+        a.uncertainties.append(f"Unresolved import: {u}")
+    if src.skipped:
+        a.uncertainties.append(f"{len(src.skipped)} module(s) could not be parsed statically (syntax errors or size); their facts are unknown.")
+
+
 def analyze_github(info: RepoInfo, settings: Optional[Settings] = None) -> Analysis:
     """Evidence-ranked analysis of a GitHub repo. GitHub is the HOST; the ML framework is detected separately.
 
@@ -1272,6 +1329,7 @@ def analyze_github(info: RepoInfo, settings: Optional[Settings] = None) -> Analy
     a.requirement_flags = list(info.requirement_flags)
     a.dependency_evidence = {r["name"]: f"declared in {r.get('source', 'requirements')}" for r in info.requirements}
     a.frameworks, fw_evidence = _detect_frameworks(names, info.source_scan)
+    _apply_source_analysis(a, info, fw_evidence)
     a.library = _library_for(a.frameworks)
     a.ui_hints["framework_evidence"] = fw_evidence
     a.linked_hf_models = list(info.linked_hf_models)
@@ -1307,8 +1365,8 @@ def analyze_github(info: RepoInfo, settings: Optional[Settings] = None) -> Analy
     elif info.primary_hf_model:
         unc.append(f"Metadata for the linked model '{info.primary_hf_model}' could not be read, so its task and size are unknown.")
     else:
-        unc.append("No primary Hugging Face model could be identified from the README or code; the task comes from repository text and "
-                   "source structure only.")
+        unc.append("No primary Hugging Face model could be identified from the README or code; the task, where established, comes from "
+                   "the repository's own declared configuration, its text and its source structure.")
 
     ins, outs, hints = infer_modalities(info.source_scan)
     scan_ins = list(ins)  # what the repository's OWN code takes as input, before declared model metadata overrides it
@@ -1321,6 +1379,30 @@ def analyze_github(info: RepoInfo, settings: Optional[Settings] = None) -> Analy
             a.task_evidence.append(Evidence("source_modalities", "static scan of " + ", ".join(sc["path"] for sc in info.source_scan[:4]),
                                             "; ".join(hints[:3]), 0.6, "structural", mt))
     a.input_modalities, a.output_modalities = ins, outs
+
+    # The repository's OWN config.json (read as bounded metadata by the inspector) may declare architectures / model_type. That is
+    # structural, not keyword, evidence: use it for the native task the same way a linked Hugging Face model's config would be used,
+    # and let a recognised declaration set the modalities. A generic or unrecognised head adds nothing (never guessed from the name).
+    cfg_own = info.config if isinstance(info.config, dict) else {}
+    own_arch_tasks: List[str] = []
+    if cfg_own and sub is None:
+        mtype = str(cfg_own.get("model_type", ""))
+        for i, arch in enumerate((cfg_own.get("architectures") or [])[:3]):
+            t = _arch_task(str(arch), mtype, cfg_own)
+            if t and t not in own_arch_tasks:
+                own_arch_tasks.append(t)
+                w = 0.4 if t == "feature-extraction" else 0.7
+                sig = GENERIC_ARCH_SIGNAL if _is_generic_arch(str(arch), t) else "architecture"
+                cands[t] = cands.get(t, 0.0) + w
+                a.task_evidence.append(Evidence(sig, "repository config.json",
+                                                f"architectures[{i}]={arch} (model_type={mtype or '?'})", w, "structural", t))
+        if own_arch_tasks:
+            a.ui_hints["model_type"] = mtype or None
+            a.ui_hints["own_architecture_tasks"] = own_arch_tasks
+            a.ui_hints["declared_architectures"] = [str(x) for x in (cfg_own.get("architectures") or [])[:3]]
+            if not (sub is not None and sub.task):
+                ins, outs = modalities_for_task(own_arch_tasks[0])
+                a.input_modalities, a.output_modalities = ins, outs
 
     text = " ".join([info.description or "", " ".join(info.topics), " ".join(info.package_keywords), info.readme or ""]).lower()
     # A repository-level AST scan says that *some* code mentions or accepts a
@@ -1612,6 +1694,259 @@ def _compare_parameters(a: Analysis, side: Dict[str, Any]) -> Tuple[Dict[str, An
     return cmp, [conflict]
 
 
+def _repository_section(a: Analysis) -> Dict[str, Any]:
+    """The normalized repository section of the report, or a small placeholder when the model was not built."""
+    repo = a.repository
+    if not isinstance(repo, dict) or not repo:
+        return {"available": False, "note": "The normalized repository model was not built for this analysis."}
+    out = dict(repo)
+    out["available"] = True
+    return out
+
+
+def _contract_section(a: Analysis) -> Dict[str, Any]:
+    """The inference contract in one place, from the deepest evidence the analysis holds (PART M #7-12).
+
+    Prefers the repository-native contract (``a.native['inference_contract']``, built from real static evidence) when present,
+    otherwise folds the deep source-analysis I/O digest and the capability requirements into the same shape. A field is filled
+    only from evidence that produced it; everything not established is listed under ``unknown``. It is never filled from a task
+    or architecture name alone."""
+    src = a.ui_hints.get("source_analysis") if isinstance(a.ui_hints, dict) else None
+    src = src if isinstance(src, dict) else {}
+    io = src.get("io_contract") if isinstance(src.get("io_contract"), dict) else {}
+    native = a.native if isinstance(a.native, dict) else {}
+    nat = native.get("inference_contract") if isinstance(native.get("inference_contract"), dict) else {}
+    repo = a.repository if isinstance(a.repository, dict) else {}
+    inv = [x for x in (repo.get("artifact_inventory") or []) if isinstance(x, dict)]
+    inv_formats = sorted({f".{str(x['format'])}" if x.get("format") and not str(x["format"]).startswith(".") else str(x.get("format"))
+                          for x in inv if x.get("format")}) if inv else []
+    load_frameworks = [s.get("framework") for s in (src.get("load_sites") or []) if isinstance(s, dict) and s.get("framework")]
+    infer_calls = [s.get("call") for s in (src.get("infer_sites") or []) if isinstance(s, dict) and s.get("call")]
+    inputs = [i.get("modality") for i in (io.get("inputs") or []) if isinstance(i, dict) and i.get("modality")] or list(a.input_modalities)
+    outputs = [o.get("kind") for o in (io.get("outputs") or []) if isinstance(o, dict) and o.get("kind")] or list(a.output_modalities)
+    framework = nat.get("framework") or (load_frameworks[0] if load_frameworks else (a.frameworks[0] if a.frameworks else None))
+    weight_formats = list(nat.get("weight_formats") or []) or inv_formats
+    unknown: List[str] = []
+    if not inputs:
+        unknown.append("input fields")
+    if not outputs:
+        unknown.append("output fields")
+    if not (load_frameworks or nat.get("weight_files") or inv):
+        unknown.append("model loading strategy")
+    if not infer_calls and not nat.get("entrypoints"):
+        unknown.append("inference entry point")
+    return {
+        "available": bool(inputs or outputs or load_frameworks or nat or inv),
+        "framework": framework,
+        "loading": sorted(set(load_frameworks)) or (nat.get("framework") and [nat["framework"]]) or [],
+        "inputs": list(dict.fromkeys(inputs)),
+        "outputs": list(dict.fromkeys(outputs)),
+        "inference_calls": sorted(set(infer_calls))[:12],
+        "preprocessing": [p.get("call") for p in (io.get("preprocessing") or []) if isinstance(p, dict)][:12],
+        "postprocessing": [p.get("call") for p in (io.get("postprocessing") or []) if isinstance(p, dict)][:12],
+        "weight_formats": weight_formats,
+        "unknown": unknown,
+        "contract_verified": bool(io.get("contract_verified")) or bool(nat.get("inputs") and nat.get("outputs")),
+        "source": "repository-native static evidence" if nat else ("source_analysis" if src else "capabilities"),
+    }
+
+
+def _safety_section(a: Analysis, side: Dict[str, Any]) -> Dict[str, Any]:
+    """The trust boundary this analysis held, as data (PART M #23).
+
+    Every rule is one the platform always enforces; ``held`` says it was not violated, and the ``detail`` names the evidence.
+    ``declared_but_not_executed`` lists repository capabilities that were observed and deliberately NOT run, and
+    ``refused_rea_capabilities`` records REA tools the safety policy declined."""
+    rea = a.rea if isinstance(a.rea, dict) else {}
+    repo = a.repository if isinstance(a.repository, dict) else {}
+    native = a.native if isinstance(a.native, dict) else {}
+    artifacts = [str(p) for p in (repo.get("artifact_files") or [])]
+    pickle_files = [str(p) for p in (native.get("pickle_weights") or [])] or \
+                   [p for p in artifacts if p.lower().endswith(PICKLE_EXTS)]
+    downloaded = rea.get("bytes_downloaded")
+    rules = [
+        {"rule": "repository_code_never_executed", "held": True,
+         "detail": "repository Python is parsed with the standard-library ast module only; no module is imported, executed or evaluated"},
+        {"rule": "no_install_of_repository_dependencies", "held": True,
+         "detail": "dependency manifests are read as text; nothing they declare is installed during analysis"},
+        {"rule": "weights_never_fully_downloaded", "held": True,
+         "detail": "weight files are read by HTTP range requests (headers only)"
+                   + (f"; {downloaded} bytes read in total" if isinstance(downloaded, int) else "")},
+        {"rule": "trust_remote_code_never_enabled", "held": True,
+         "detail": ("the repository declares config.auto_map custom code; it is reported for the user, never enabled"
+                    if a.trust_remote_code else "no custom repository code was enabled for loading")},
+        {"rule": "repository_content_is_untrusted_data", "held": True,
+         "detail": "README, source and config text are treated as data; no instruction in them can change platform behaviour"},
+    ]
+    declared: List[Dict[str, Any]] = []
+    if a.trust_remote_code:
+        declared.append({"capability": "trust_remote_code (config.auto_map custom code)", "executed": False,
+                         "reason": "executing repository Python is refused"})
+    if pickle_files:
+        declared.append({"capability": "pickle weight deserialisation", "executed": False,
+                         "reason": f"unpickling can execute code; {len(pickle_files)} pickle file(s) are listed and are not loaded"})
+    return {"rules": rules, "declared_but_not_executed": declared,
+            "refused_rea_capabilities": {str(k): str(v)[:160] for k, v in (side.get("refusals") or {}).items()}}
+
+
+def _components_section(a: Analysis) -> Dict[str, Any]:
+    """Components that are unsupported, inaccessible or unresolved, kept apart from 'absent' (PART M #24).
+
+    ``gaps`` are things that could not be READ (content unknown, never assumed absent); ``missing`` are things the provider
+    reported as absent; ``unsupported_formats`` are artifacts the platform cannot safely inspect further; and
+    ``unresolved_conclusions`` are conclusions the evidence could not settle."""
+    repo = a.repository if isinstance(a.repository, dict) else {}
+    native = a.native if isinstance(a.native, dict) else {}
+    artifacts = [str(p) for p in (repo.get("artifact_files") or [])]
+    unsupported: List[Dict[str, Any]] = []
+    for p in artifacts:
+        if p.lower().endswith((".onnx", ".pb", ".tflite", ".h5", ".keras", ".msgpack")):
+            unsupported.append({"component": p, "reason": "artifact format is listed but not header-inspected by the platform"})
+    if native.get("pickle_weights") and not native.get("safe_weights"):
+        unsupported.append({"component": "pickle-format weights",
+                            "reason": "only pickle-format weights were found; they are never loaded without explicit consent"})
+    return {
+        "gaps": [dict(g) for g in (repo.get("gaps") or [])],
+        "missing": list(repo.get("missing") or []),
+        "unsupported_formats": unsupported,
+        "unresolved_conclusions": list(dict.fromkeys(a.uncertainties or []))[:12],
+        "inspection_coverage": dict(repo.get("coverage") or {}),
+    }
+
+
+def _model_section(a: Analysis) -> Dict[str, Any]:
+    """Repository classification, task/subtask, architecture and frameworks in one place (PART M #3-6).
+
+    Every value is read from evidence the analysis already holds: the provider classification, the detected task and its
+    evidence, the model type/architecture from the repository config, and the frameworks detected from dependencies/imports.
+    A field the evidence did not establish stays ``None`` rather than being guessed from the model's name."""
+    me = a.model_evidence if isinstance(a.model_evidence, dict) else {}
+    cfg = me.get("config") if isinstance(me.get("config"), dict) else {}
+    hints = a.ui_hints if isinstance(a.ui_hints, dict) else {}
+    model_type = hints.get("model_type") or cfg.get("model_type")
+    archs = cfg.get("architectures") if isinstance(cfg.get("architectures"), list) else []
+    if not archs and isinstance(hints.get("declared_architectures"), list):
+        archs = hints["declared_architectures"]  # a GitHub-native repo's own config.json architectures
+    native = a.native if isinstance(a.native, dict) else {}
+    subtask = None
+    if a.task == "text-generation" and a.chat:
+        subtask = "chat"
+    if hints.get("translation_prefix_hint"):
+        subtask = "translation"
+    classification = {
+        "provider": a.host,
+        "origin": a.origin,  # huggingface | github-linked-hf | github-native
+        "native_eligible": bool(native.get("eligible")) if native else None,
+        "signals": list(native.get("signals") or [])[:12],
+    }
+    return {
+        "classification": classification,
+        "task": a.task,
+        "subtask": subtask,
+        "task_confidence": a.task_confidence,
+        "architecture": {"model_type": model_type, "architectures": list(archs)},
+        "frameworks": list(a.frameworks),
+        "library": a.library,
+        "modalities": {"input": list(a.input_modalities), "output": list(a.output_modalities)},
+    }
+
+
+def _dependencies_section(a: Analysis) -> Dict[str, Any]:
+    """Dependency requirements and where each was found (PART M #13). Nothing is installed during analysis."""
+    return {
+        "dependencies": list(a.dependencies or []),
+        "evidence": {str(k): str(v)[:200] for k, v in (a.dependency_evidence or {}).items()},
+        "flags": list(a.requirement_flags or []),
+        "min_transformers": a.min_transformers,
+        "installed_during_analysis": False,
+    }
+
+
+def _limitations_section(a: Analysis, side: Dict[str, Any], components: Dict[str, Any]) -> List[str]:
+    """The analysis's own remaining limitations (PART M #25): what this platform cannot establish or do, as opposed to what this
+    particular repository failed to provide. Static and honest; it never claims more than the platform really does."""
+    out: List[str] = [
+        "Analysis is metadata- and source-static only: repository code is never executed, so runtime behaviour (actual tensor "
+        "shapes at inference, real output formatting) is not observed.",
+        "Weight files are read by header only; tensor values, quantisation calibration and numerical behaviour are not inspected.",
+        "The inference contract is assembled from declared metadata, static call sites and (for GitHub-native repos) documentation; "
+        "fields the evidence did not establish are listed as unknown rather than guessed.",
+    ]
+    if side.get("status") in ("not_invoked", "not_applicable"):
+        out.append("REA did not inspect the weight files, so parameter/dtype figures were not independently verified.")
+    if side.get("status") == "partial":
+        out.append("REA inspected only part of the model's weight files, so its figures cover an incomplete set.")
+    if components.get("gaps"):
+        out.append("Some repository content could not be read (see unsupported_components.gaps); what it would show is unknown.")
+    if a.origin == "github-native":
+        out.append("A GitHub-native repository yields a scaffold: the platform verifies structure, artifacts and dependencies, but "
+                   "does not certify that the code runs or that a safe loader exists.")
+    if a.trust_remote_code:
+        out.append("The model requires custom repository code (trust_remote_code); it is reported but never executed or enabled.")
+    return out
+
+
+def _build_claims(a: Analysis) -> Dict[str, Any]:
+    """Claim-level validation for this analysis, derived from evidence already on ``a``. Never raises: a failure to build the
+    claim set must not invalidate the analysis."""
+    try:
+        from .claims import build_claims, claims_report
+        src = None
+        if isinstance(a.ui_hints.get("source_analysis"), dict):
+            src = _SourceDigest(a.ui_hints["source_analysis"])
+        repo = _RepoDigest(a.repository)
+        return claims_report(build_claims(a, repo=repo, src=src))
+    except Exception as exc:
+        return {"schema_version": "1.0", "claims": [], "summary": {"total": 0, "by_status": {}, "conflicted": [], "unknown": []},
+                "error": f"the claim set could not be built ({type(exc).__name__})"}
+
+
+class _SourceDigest:
+    """A minimal read-only view over ``ui_hints['source_analysis']`` so the claim engine can read it without importing the module."""
+
+    def __init__(self, data: Dict[str, Any]) -> None:
+        self._d = data
+
+    @property
+    def load_sites(self) -> List[Any]:
+        return [_LoadSite(s) for s in (self._d.get("load_sites") or []) if isinstance(s, dict)]
+
+    @property
+    def infer_sites(self) -> List[Dict[str, Any]]:
+        return [s for s in (self._d.get("infer_sites") or []) if isinstance(s, dict)]
+
+    @property
+    def io_contract(self) -> Dict[str, Any]:
+        return self._d.get("io_contract") or {}
+
+
+class _LoadSite:
+    def __init__(self, d: Dict[str, Any]) -> None:
+        self.framework = d.get("framework")
+        self.family = d.get("family")
+        self.call = d.get("call")
+        self.module = d.get("module")
+        self.line = d.get("line")
+        self.model_id = d.get("model_id")
+
+
+class _RepoDigest:
+    def __init__(self, d: Optional[Dict[str, Any]]) -> None:
+        self._d = d or {}
+
+    @property
+    def provider(self) -> Optional[str]:
+        return self._d.get("provider")
+
+    @property
+    def repo_id(self) -> str:
+        return str(self._d.get("repo_id") or "")
+
+    @property
+    def resolved_revision(self) -> Optional[str]:
+        return self._d.get("resolved_revision")
+
+
 def build_combined_analysis(a: Analysis) -> Dict[str, Any]:
     """One structured report over the Python Analyzer's findings and REA's findings, which stay separate inside it.
 
@@ -1620,6 +1955,14 @@ def build_combined_analysis(a: Analysis) -> Dict[str, Any]:
     leaves the Python section exactly as the Analyzer produced it."""
     hw = a.hardware
     side = _rea_side(a.rea)
+    claims = _build_claims(a)
+    repository = _repository_section(a)
+    contract = _contract_section(a)
+    safety = _safety_section(a, side)
+    components = _components_section(a)
+    model = _model_section(a)
+    dependencies = _dependencies_section(a)
+    limitations = _limitations_section(a, side, components)
     status = side["status"]
     comparison, conflicts = _compare_parameters(a, side)
     weight_format, wf_warnings, wf_conflicts = _rea_weight_format_section(a, side)
@@ -1708,6 +2051,13 @@ def build_combined_analysis(a: Analysis) -> Dict[str, Any]:
             "warnings": py_warnings[:8], "uncertainties": py_uncertainties[:6],
         },
         "rea_analysis": side,
+        "repository": repository,
+        "model": model,
+        "inference_contract": contract,
+        "dependencies": dependencies,
+        "safety": safety,
+        "unsupported_components": components,
+        "claims": claims,
         "parameter_comparison": comparison,
         "weight_format": weight_format,
         "rea_investigation": investigation,
@@ -1721,12 +2071,14 @@ def build_combined_analysis(a: Analysis) -> Dict[str, Any]:
         "warnings": list(dict.fromkeys(py_warnings[:8] + rea_warnings)),
         "uncertainties": list(dict.fromkeys(py_uncertainties[:6] + rea_uncertainties)),
         "recommendations": list(dict.fromkeys(recs)),
+        "limitations": limitations,
     }
 
 
 def _attach_combined(a: Analysis) -> None:
     try:
         a.combined_analysis = build_combined_analysis(a)
+        a.claims = a.combined_analysis.get("claims")  # the same claim set the report carries; kept on the Analysis for callers
     except Exception as exc:  # derived data: failing to build it must never invalidate the analysis itself
         a.combined_analysis = {"schema_version": COMBINED_SCHEMA_VERSION, "status": "unavailable",
                                "error": f"The combined report could not be built ({type(exc).__name__}); the Python analysis is unaffected."}
@@ -1738,10 +2090,13 @@ def _attach_evidence_ledger(a: Analysis, info: RepoInfo) -> None:
     for e in a.task_evidence:
         rows.append({"source": e.source, "location": e.signal, "finding": e.detail, "provenance": e.tier,
                      "confidence": e.weight, "task": e.task})
-    for gap in getattr(info, "inspection_gaps", []):
-        if isinstance(gap, dict):
-            rows.append({"source": "repository inspection", "location": gap.get("code", "unknown"),
-                         "finding": gap.get("message", "unavailable"), "provenance": "unknown", "confidence": 0.0})
+    # inspection_gaps is GitHub-only provenance (only the GitHub inspector records gaps); a Hugging Face analysis must not
+    # inherit them, matching how the repository model gates the same field on the provider.
+    if info.source.kind == "github":
+        for gap in getattr(info, "inspection_gaps", []):
+            if isinstance(gap, dict):
+                rows.append({"source": "repository inspection", "location": gap.get("code", "unknown"),
+                             "finding": gap.get("message", "unavailable"), "provenance": "unknown", "confidence": 0.0})
     # Merge identical findings while retaining every distinct source/location.
     merged: Dict[Tuple[str, str], Dict[str, Any]] = {}
     for row in rows:
@@ -1762,6 +2117,11 @@ def _attach_evidence_ledger(a: Analysis, info: RepoInfo) -> None:
 
 def analyze(info: RepoInfo, settings: Optional[Settings] = None) -> Analysis:
     a = analyze_github(info, settings) if info.source.kind == "github" else analyze_hf(info, settings)
+    try:  # normalized, provider-neutral repository representation (identity, inventories, coverage, gaps); never fetched or executed
+        from .repo_model import from_info
+        a.repository = from_info(info, source_analysis=getattr(info, "source_analysis", None)).to_dict()
+    except Exception as exc:
+        a.warnings.append(f"The normalized repository model could not be built ({type(exc).__name__}); the analysis is unaffected.")
     ctx = getattr(info, "evidence", None)  # collected before analysis (see pipeline); the metadata gaps it filled were already analysed
     if ctx is not None:
         try:

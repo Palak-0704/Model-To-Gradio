@@ -100,6 +100,9 @@ class RepoInfo:
     primary_model_info: Optional["RepoInfo"] = None
     # static (ast-only) facts about a few small source files; nothing here was executed
     source_scan: List[Dict[str, Any]] = field(default_factory=list)
+    # Deep, repository-wide static analysis (m2g.source_analysis.SourceAnalysis): module graph, call graph, loading sites and an
+    # evidence-backed I/O contract. Built from source text already fetched; nothing is imported or executed. None when not run.
+    source_analysis: Optional[Any] = None
     package_keywords: List[str] = field(default_factory=list)
     # bookkeeping
     warnings: List[str] = field(default_factory=list)
@@ -827,7 +830,6 @@ def _inspect_github(ref: SourceRef, fetcher: SafeFetcher, settings: Settings) ->
     api = f"https://api.github.com/repos/{ref.repo_id}"
     gh_headers = {"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"}
     api_ok = True
-    api_error: Optional[HTTPStatusError] = None
     try:
         meta = fetcher.get_json(api, gh_headers)
         if not isinstance(meta, dict):
@@ -855,7 +857,7 @@ def _inspect_github(ref: SourceRef, fetcher: SafeFetcher, settings: Settings) ->
         if exc.status == 410:
             raise InspectionError("GitHub reports that this repository is no longer available (HTTP 410).", code="repository_gone")
         if exc.status in (403, 429):
-            api_ok, api_error = False, exc
+            api_ok = False
             info.warnings.append(f"GitHub API returned HTTP {exc.status} (rate limit or blocked). Falling back to "
                                  "raw.githubusercontent.com for README/requirements only; set GITHUB_TOKEN to lift the limit.")
             _gap(info, "api_unavailable", ("GitHub's API rate limit was reached" if _rate_limited(exc) else
@@ -1002,6 +1004,7 @@ def _inspect_github(ref: SourceRef, fetcher: SafeFetcher, settings: Settings) ->
     # Import relationships are recorded from AST nodes; nothing is imported or
     # executed.  We record every omission so callers never mistake it
     # for negative evidence.
+    scanned_text: Dict[str, str] = {}
     source_candidates = pick_source_files(paths) if paths else []
     inspected, skipped, inaccessible, remaining = [], [], [], []
     source_bytes = 0
@@ -1030,7 +1033,9 @@ def _inspect_github(ref: SourceRef, fetcher: SafeFetcher, settings: Settings) ->
         info.fetched.append((path, len(res.body)))
         inspected.append(path)
         source_bytes += len(res.body)
-        scanned = scan_python_source(path, res.body.decode("utf-8", errors="replace"))
+        text = res.body.decode("utf-8", errors="replace")
+        scanned_text[path] = text
+        scanned = scan_python_source(path, text)
         if scanned:
             info.source_scan.append(scanned)
             info.evidence_ledger.append({"source": path, "location": "AST", "finding": "static source summary",
@@ -1041,6 +1046,29 @@ def _inspect_github(ref: SourceRef, fetcher: SafeFetcher, settings: Settings) ->
                                 "budget": {"max_files": settings.github_max_source_files,
                                            "max_bytes": settings.github_max_source_bytes,
                                            "max_file_bytes": settings.github_max_source_file_bytes}}
+
+    # Deep repository-wide source analysis (module graph, call graph, loading sites, I/O contract). Same fetched text, ast only.
+    if scanned_text or paths:
+        try:
+            from .source_analysis import MAX_MODULES, analyze_repository, select_modules
+            limit = int(getattr(settings, "max_source_modules", 0) or MAX_MODULES)
+            extra_modules, module_skips = select_modules(paths, limit=limit) if paths else ([], [])
+            for path in extra_modules:
+                if path in scanned_text:
+                    continue
+                try:
+                    res = fetcher.fetch(f"https://raw.githubusercontent.com/{ref.repo_id}/{fetch_ref}/{path}", max_bytes=_MAX_SOURCE_FILE)
+                except (HTTPStatusError, NetworkError, FetchError):
+                    continue
+                info.fetched.append((path, len(res.body)))
+                scanned_text[path] = res.body.decode("utf-8", errors="replace")
+            src = analyze_repository(sorted(scanned_text.items()), listed=paths, limits={"max_modules": limit})
+            for s in module_skips:
+                if s not in src.skipped:
+                    src.skipped.append(s)
+            info.source_analysis = src
+        except Exception as exc:  # a static-analysis failure must never break inspection; the shallow scan still stands
+            info.warnings.append(f"Deep source analysis did not complete ({type(exc).__name__}); the basic source scan is unaffected.")
 
     info.linked_hf_models = _find_hf_links(info.readme)
     for rid in info.linked_hf_models:  # where each link was found (provenance only; it changes no ranking or decision)

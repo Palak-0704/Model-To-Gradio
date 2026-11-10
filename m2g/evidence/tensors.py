@@ -63,8 +63,9 @@ def inspect_safetensors(ctx: CollectionContext, name: str, listed_size: Optional
     url = ""
     details: Dict[str, Any] = {"header_only": True, "listed_size": listed_size}
     try:
-        url = file_url(ctx.repo_id, ctx.revision, name)  # rejects unsafe names before any request
-        remote = fetch_safetensors_header(ctx.fetcher, ctx.repo_id, ctx.revision, name, expected_size=listed_size, stats=stats)
+        url = file_url(ctx.repo_id, ctx.revision, name, ctx.provider)  # rejects unsafe names before any request
+        remote = fetch_safetensors_header(ctx.fetcher, ctx.repo_id, ctx.revision, name, expected_size=listed_size, stats=stats,
+                                          provider=ctx.provider)
         summary = summarize_header(remote.blob, remote.total_size)
         header = json.loads(remote.blob[8:].decode("utf-8"))
     except ReaError as exc:
