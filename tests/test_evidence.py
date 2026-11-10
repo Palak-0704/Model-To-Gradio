@@ -537,12 +537,35 @@ class TestReaEvidence(unittest.TestCase):
 
 
 class TestSourcesAndParsing(unittest.TestCase):
-    def test_github_repo_without_linked_model_is_skipped_not_guessed(self):
+    def test_github_repo_without_files_reports_missing_listing_not_guessed(self):
+        # A GitHub repository is now collected from its OWN files. With no listing at all there is nothing to fetch, which is
+        # recorded as a missing listing (never invented), and no network request is made.
         ft = FakeTransport()
         info = info_for(repo="octo/tool", kind="github")
         bundle = run(ft, info)
-        self.assertEqual(bundle.get("source:model").status, SKIPPED)
+        self.assertEqual(bundle.get("source:files").status, MISSING)
         self.assertEqual(ft.calls, [])
+
+    def test_github_repo_with_its_own_files_is_collected_from_raw_github(self):
+        # README/config/requirements are fetched from raw.githubusercontent.com at the pinned commit; weights are not downloaded.
+        ft = FakeTransport()
+        sha = "b" * 40
+        ft.add(f"/octo/tool/{sha}/README.md", "# Tool\nA sentiment model.")
+        ft.add_json(f"/octo/tool/{sha}/config.json", {"model_type": "bert"})
+        ft.add(f"/octo/tool/{sha}/requirements.txt", "torch\ntransformers\n")
+        info = info_for(repo="octo/tool", kind="github",
+                        files=[("README.md", 24), ("config.json", 20), ("requirements.txt", 20), ("model.safetensors", 999)])
+        info.commit_sha = sha
+        bundle = run(ft, info)
+        self.assertEqual(bundle.get("file:README.md").status, COLLECTED)
+        self.assertEqual(bundle.get("file:config.json").data, {"model_type": "bert"})
+        self.assertEqual(bundle.get("file:requirements.txt").status, COLLECTED)
+        self.assertEqual(bundle.resolved_revision, sha)
+        self.assertTrue(any(p.startswith("/octo/tool/" + sha) for p in ft.paths()))
+        # A safetensors file may only ever be read by HEADER (range requests), never downloaded whole.
+        weight_calls = [(p, r) for p, r in ft.calls if p.endswith(".safetensors")]
+        self.assertTrue(all(r is not None for _, r in weight_calls), "weight files must only be read over range requests")
+        self.assertTrue(any(i.kind == "tensor-header" for i in bundle.items))
 
     def test_github_repo_uses_its_linked_model(self):
         ft = FakeTransport()

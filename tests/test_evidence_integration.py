@@ -167,3 +167,39 @@ def test_notebook_title_states_evidence_basis_and_gaps():
     md = _evidence_md(analyze(info))
     assert "1 collected" in md and "1 inaccessible" in md and "unknown, not assumed" in md and "tokenizer_config.json" in md
     assert "not run" in _evidence_md(analyze(_info(CFG)))
+
+
+# ---------------------------------------------------------------- github-native end to end
+
+
+def test_github_only_repository_collects_its_own_files_end_to_end():
+    """A GitHub repository with no linked Hugging Face model is inspected, its OWN files collected through
+    raw.githubusercontent.com, analysed, and its evidence reaches analysis.json — without ever downloading weights."""
+    import sys
+    sys.path.insert(0, "tests")
+    from fakehub import FakeWeb, add_github_repo
+    from m2g.inspector import inspect_url
+    from m2g.evidence_bridge import gather_evidence, attach_to_info as attach
+
+    web = FakeWeb()
+    add_github_repo(web, "acme/netzero", readme="# Acme NetZero\nA small PyTorch sequence-classification model.",
+                    requirements="torch>=2.0\ntransformers\n",
+                    tree=["README.md", "requirements.txt", "main.py", "config.json", "checkpoints/netzero.safetensors"],
+                    extra_files={"main.py": "import torch\nfrom transformers import AutoModelForSequenceClassification\n",
+                                 "config.json": json.dumps(CFG)})
+    info = inspect_url("https://github.com/acme/netzero", web.fetcher())
+    assert info.source.kind == "github"
+    assert info.primary_model_info is None  # no linked model: this is the github-only path
+
+    bundle = gather_evidence(info, web.fetcher(), None, None)
+    attach(info, bundle)
+    a = analyze(info)
+
+    assert bundle.get("github:files").status == COLLECTED
+    assert bundle.get("file:README.md").status == COLLECTED
+    assert bundle.get("file:requirements.txt").status == COLLECTED
+    assert a.repository["provider"] == "github"
+    assert a.evidence["source_kind"] == "github"
+    # No weight file was ever downloaded whole: every safetensors request is a bounded range read.
+    weight_calls = [c for c in web.calls if c.endswith(".safetensors")]
+    assert all("raw.githubusercontent.com" in c for c in weight_calls)

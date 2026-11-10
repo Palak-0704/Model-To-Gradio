@@ -164,6 +164,139 @@ class TestBuildCombinedAnalysis(unittest.TestCase):
         report = build_combined_analysis(make_analysis(task_confidence=0.35, rea=rea_dict()))
         self.assertTrue(any("task confidence is low" in r for r in report["recommendations"]))
 
+    def test_repository_section_is_absent_when_no_repo_model_was_built(self):
+        report = build_combined_analysis(make_analysis(rea=rea_dict()))
+        self.assertFalse(report["repository"]["available"])
+        self.assertIn("not built", report["repository"]["note"])
+
+    def test_repository_section_is_reported_when_present(self):
+        a = make_analysis(rea=rea_dict())
+        a.repository = {"provider": "github", "repo_id": "acme/thing", "resolved_revision": "a" * 40,
+                        "missing": ["README"], "coverage": {"complete": True}}
+        report = build_combined_analysis(a)
+        self.assertTrue(report["repository"]["available"])
+        self.assertEqual(report["repository"]["provider"], "github")
+
+    def test_claims_section_carries_statuses_and_evidence_ids(self):
+        a = make_analysis(rea=rea_dict())
+        a.task_evidence = [an.Evidence("config_architectures", "config.json", "TextClassification", 0.9, "structural", "text-classification")]
+        report = build_combined_analysis(a)
+        claims = {c["field"]: c for c in report["claims"]["claims"]}
+        self.assertEqual(claims["task"]["value"], "text-classification")
+        self.assertTrue(claims["task"]["supporting"])
+        self.assertIn("by_status", report["claims"]["summary"])
+
+    def test_claims_section_degrades_gracefully_if_it_fails(self):
+        a = make_analysis(rea=rea_dict())
+        with mock.patch("m2g.claims.build_claims", side_effect=RuntimeError("boom")):
+            report = build_combined_analysis(a)
+        self.assertEqual(report["claims"]["claims"], [])
+        self.assertIn("error", report["claims"])
+
+    def test_part_m_report_has_all_twenty_five_sections(self):
+        a = make_analysis(rea=rea_dict())
+        a.repository = {"provider": "huggingface", "repo_id": "acme/tiny", "artifact_files": ["model.safetensors"], "coverage": {}}
+        report = build_combined_analysis(a)
+        # The 25 PART M report areas, each mapped to the section that carries it. A missing key is a missing report area.
+        for key in ("repository", "model", "inference_contract", "dependencies", "safety", "unsupported_components",
+                    "claims", "parameter_comparison", "weight_format", "rea_investigation", "conflicts", "confidence",
+                    "evidence", "warnings", "uncertainties", "recommendations", "limitations", "python_analysis",
+                    "rea_analysis"):
+            self.assertIn(key, report)
+        # identity/provider/revision (1-2), classification (3), task/subtask (4), architecture (5), frameworks (6)
+        self.assertIn("provider", report["model"]["classification"])
+        self.assertIn("task", report["model"])
+        self.assertIn("architecture", report["model"])
+        self.assertIn("frameworks", report["model"])
+        # loading (7), input/output (8-9), preprocessing/inference/postprocessing (10-12), dependencies (13)
+        self.assertIn("loading", report["inference_contract"])
+        self.assertIn("inputs", report["inference_contract"])
+        self.assertIn("outputs", report["inference_contract"])
+        self.assertIn("preprocessing", report["inference_contract"])
+        self.assertIn("postprocessing", report["inference_contract"])
+        self.assertIn("dependencies", report["dependencies"])
+        # runtime (14), hardware (15), artifacts (16) are in python_analysis / repository
+        self.assertIn("hardware", report["python_analysis"])
+        self.assertIn("artifact_files", report["repository"])
+        # conclusions (17), confidence/statuses (18), conflicts (19), unknowns (20), coverage (21), REA (22)
+        self.assertTrue(report["evidence"])
+        self.assertIn("parameter_count", report["confidence"])
+        self.assertIn("conflicts", report)
+        self.assertIn("uncertainties", report)
+        self.assertIn("coverage", report["repository"])
+        self.assertIn("calls", report["rea_investigation"])
+        # safety exclusions (23), unsupported/inaccessible (24), remaining limitations (25)
+        self.assertIn("rules", report["safety"])
+        self.assertIn("gaps", report["unsupported_components"])
+        self.assertTrue(report["limitations"])
+        json.dumps(report)  # the whole report stays plain, JSON-safe data
+
+    def test_safety_section_states_the_trust_boundary(self):
+        report = build_combined_analysis(make_analysis(rea=rea_dict()))
+        rules = {r["rule"]: r for r in report["safety"]["rules"]}
+        self.assertTrue(all(r["held"] for r in report["safety"]["rules"]))
+        for rule in ("repository_code_never_executed", "no_install_of_repository_dependencies",
+                     "weights_never_fully_downloaded", "trust_remote_code_never_enabled"):
+            self.assertIn(rule, rules)
+        self.assertEqual(report["safety"]["declared_but_not_executed"], [])
+
+    def test_safety_section_reports_declared_but_not_executed_capabilities(self):
+        a = make_analysis(rea=rea_dict())
+        a.trust_remote_code = True
+        a.repository = {"artifact_files": ["pytorch_model.bin", "model.safetensors"]}
+        a.native = {"pickle_weights": ["pytorch_model.bin"], "safe_weights": ["model.safetensors"]}
+        report = build_combined_analysis(a)
+        caps = {d["capability"] for d in report["safety"]["declared_but_not_executed"]}
+        self.assertTrue(any("trust_remote_code" in c for c in caps))
+        self.assertTrue(any("pickle" in c for c in caps))
+        self.assertTrue(all(d["executed"] is False for d in report["safety"]["declared_but_not_executed"]))
+        rule = {r["rule"]: r for r in report["safety"]["rules"]}["trust_remote_code_never_enabled"]
+        self.assertIn("auto_map", rule["detail"])
+
+    def test_unsupported_components_keeps_gaps_apart_from_missing(self):
+        a = make_analysis(rea=rea_dict())
+        a.repository = {"artifact_files": ["model.onnx", "model.safetensors"], "gaps": [{"code": "api_unavailable", "message": "no tree"}],
+                        "missing": ["README / documentation"], "coverage": {"complete": False}}
+        a.uncertainties = ["the tokenizer could not be read"]
+        report = build_combined_analysis(a)
+        comp = report["unsupported_components"]
+        self.assertEqual([g["code"] for g in comp["gaps"]], ["api_unavailable"])
+        self.assertEqual(comp["missing"], ["README / documentation"])
+        self.assertTrue(any(u["component"] == "model.onnx" for u in comp["unsupported_formats"]))
+        self.assertEqual(comp["unresolved_conclusions"], ["the tokenizer could not be read"])
+        self.assertFalse(comp["inspection_coverage"]["complete"])
+
+    def test_contract_never_invents_fields_without_evidence(self):
+        a = make_analysis(rea=rea_dict())  # a hand-built Analysis with no source analysis and no native contract
+        a.input_modalities, a.output_modalities = [], []
+        a.frameworks, a.library = [], "unknown"
+        a.repository = {}
+        report = build_combined_analysis(a)
+        contract = report["inference_contract"]
+        self.assertFalse(contract["available"])
+        self.assertEqual(contract["inputs"], [])
+        self.assertEqual(contract["outputs"], [])
+        self.assertIn("input fields", contract["unknown"])
+        self.assertIn("model loading strategy", contract["unknown"])
+
+    def test_limitations_name_the_static_boundary(self):
+        report = build_combined_analysis(make_analysis(rea=rea_dict()))
+        joined = " ".join(report["limitations"]).lower()
+        self.assertIn("never executed", joined)
+        self.assertIn("header", joined)
+
+    def test_limitations_mention_review_when_rea_did_not_run(self):
+        report = build_combined_analysis(make_analysis(rea=None))
+        self.assertTrue(any("REA did not inspect" in lim for lim in report["limitations"]))
+
+    def test_model_section_never_guesses_from_the_name(self):
+        a = make_analysis(rea=rea_dict())  # task/arch empty on a hand-built Analysis
+        a.task, a.task_confidence = None, 0.0
+        a.model_evidence, a.ui_hints = {}, {}
+        report = build_combined_analysis(a)
+        self.assertIsNone(report["model"]["architecture"]["model_type"])
+        self.assertEqual(report["model"]["architecture"]["architectures"], [])
+
 
 # ----------------------------------------------------------------------------- part 2: through the real pipeline
 class TestCombinedThroughPipeline(Base):
@@ -252,6 +385,13 @@ class TestCombinedThroughPipeline(Base):
         self.assertEqual(data["combined_analysis"]["rea_analysis"]["status"], "completed")
         self.assertEqual(data["combined_analysis"]["python_analysis"]["task"], "text-classification")
         self.assertEqual(data["combined_analysis"]["conflicts"][0]["field"], "parameter_count")
+        self.assertTrue(data["combined_analysis"]["claims"]["claims"])  # claim-level validation reaches analysis.json
+        self.assertIn("repository", data["combined_analysis"])
+        # the PART M sections the downstream consumers rely on are present and JSON-safe in analysis.json
+        for key in ("model", "inference_contract", "dependencies", "safety", "unsupported_components", "limitations"):
+            self.assertIn(key, data["combined_analysis"])
+        self.assertTrue(data["combined_analysis"]["inference_contract"]["inputs"])
+        self.assertTrue(all(r["held"] for r in data["combined_analysis"]["safety"]["rules"]))
 
     def test_the_combined_report_reaches_opencode(self):
         a = self.run_preset().analysis

@@ -48,8 +48,19 @@ def api_url(repo_id: str, revision: Optional[str] = None) -> str:
     return (f"{base}/revision/{revision}" if revision else base) + "?blobs=true"
 
 
-def file_url(repo_id: str, revision: str, name: str) -> str:
-    return f"https://huggingface.co/{repo_id}/resolve/{revision}/{urllib.parse.quote(safe_repo_path(name))}"
+def file_url(repo_id: str, revision: str, name: str, provider: str = "huggingface") -> str:
+    """The URL of one repository file, built from validated, path-safe components only.
+
+    Hugging Face resolves through ``/{repo}/resolve/{rev}/{file}``; GitHub serves raw file bytes from
+    ``raw.githubusercontent.com/{repo}/{rev}/{file}``. An unknown provider is refused rather than guessed."""
+    safe = urllib.parse.quote(safe_repo_path(name))
+    if provider == "github":
+        validate_repo_id(repo_id)
+        validate_revision(revision)
+        return f"https://raw.githubusercontent.com/{repo_id}/{revision}/{safe}"
+    if provider in ("huggingface", "", None):
+        return f"https://huggingface.co/{repo_id}/resolve/{revision}/{safe}"
+    raise SecurityError(f"Unsupported file provider {provider!r}.")
 
 
 def sanitize(text: str, secrets: Sequence[str] = ()) -> Tuple[str, bool]:
