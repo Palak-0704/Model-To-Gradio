@@ -663,8 +663,12 @@ def _rea_facts(a: Analysis) -> Dict[str, Any]:
         "server": server,
         "tools_executed": [c.get("tool") for c in calls],
         "capabilities_discovered": list(rea.get("capabilities") or [])[:40],
-        "investigation": [{"tool": i.get("tool"), "target": i.get("target"), "reason": i.get("reason"), "ok": i.get("ok")}
-                          for i in _dict_items(rea.get("investigation"))][:20],
+        "capabilities_by_tag": {str(k): list(v) for k, v in (rea.get("capabilities_by_tag") or {}).items()},
+        "questions_raised": [{"kind": q.get("kind"), "target": q.get("target"), "text": q.get("text")}
+                             for q in _dict_items(rea.get("questions"))][:20],
+        "investigation_stop_reason": str(rea.get("stop_reason") or ""),
+        "investigation": [{"tool": i.get("tool"), "target": i.get("target"), "reason": i.get("reason"), "ok": i.get("ok"),
+                           "capability": i.get("capability")} for i in _dict_items(rea.get("investigation"))][:20],
         "files_inspected": [{"file": s.get("file"), "tensor_count": s.get("tensor_count"), "parameters": s.get("parameters"),
                              "dtypes": s.get("dtypes")} for s in summaries[:3]],
         "findings": [f for f in findings if isinstance(f, (str, int, float))][:6],

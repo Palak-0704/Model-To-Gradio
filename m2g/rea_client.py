@@ -65,19 +65,21 @@ import urllib.parse
 import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Set, Tuple
 
 from .colab_cli import child_environment, kill_process_tree
 from .config import PROJECT_ROOT, Settings
 from .rea_capabilities import (
+    Budget,
     CapabilityPolicy,
-    GAP_BYTE_ENTROPY,
-    GAP_EVIDENCE_BUNDLE,
-    GAP_RESIDUAL_UNKNOWNS,
-    GAP_RETAINED_METADATA,
-    PlanContext,
+    EvidenceState,
+    filter_plan,
+    generate_questions,
     known_safe_tools,
-    plan_capability_investigation,
+    observe,
+    plan_questions,
+    state_signature,
+    tag_tools,
 )
 from .security import (
     FetchError,
@@ -112,6 +114,10 @@ MAX_HEADER_BYTES = 8 * 1024 * 1024  # our own ceiling; REA's is 100 MB
 MAX_GGUF_WINDOW_BYTES = 8 * 1024 * 1024  # largest GGUF header window we will fetch (doubling stops here)
 MAX_REMOTE_FILE_BYTES = 1 << 40  # 1 TiB: a remote size above this is treated as a lie, never as a sparse-file length
 MAX_OUTPUT_CHARS = 8_000  # stored per tool result
+MAX_INVESTIGATION_CALLS = 40  # adaptive-loop safety ceiling (a runaway guard, not a tool allow-list)
+MAX_INVESTIGATION_SECONDS = 120.0  # adaptive-loop wall-clock budget
+MAX_INVESTIGATION_FAILURES = 5  # stop after this many failed optional calls
+MAX_INVESTIGATION_ROUNDS = 12  # hard backstop against a pathological planner; the loop normally stops on "no progress"
 INIT_TIMEOUT_S = 90.0
 CALL_TIMEOUT_S = 120.0
 SCRATCH_SUBDIR = (".m2g", "rea")  # inside the project; ``.m2g/`` is already git-ignored
@@ -166,7 +172,12 @@ class ReaReport:
     server: Dict[str, Any] = field(default_factory=dict)
     tools_discovered: int = 0
     capabilities: List[str] = field(default_factory=list)  # advertised tools the capability policy would allow (reporting only)
+    capabilities_by_tag: Dict[str, List[str]] = field(default_factory=dict)  # capability tag -> eligible tool names
+    refusals: Dict[str, str] = field(default_factory=dict)  # advertised tool -> why the policy refuses it (reporting only)
+    questions: List[Dict[str, Any]] = field(default_factory=list)  # evidence-gap questions raised, with whether they were answered
     investigation: List[Dict[str, Any]] = field(default_factory=list)  # capability-selected calls: {tool, target, reason, ok, detail}
+    stop_reason: str = ""  # why the adaptive investigation stopped (evidence complete / no capability / no progress / budget)
+    budget: Dict[str, Any] = field(default_factory=dict)  # the resource budget the loop ran under, and what it used
     calls: List[ReaToolCall] = field(default_factory=list)
     header_summaries: List[Dict[str, Any]] = field(default_factory=list)  # parsed locally from the fetched header
     shards_total: int = 0
@@ -177,6 +188,8 @@ class ReaReport:
     findings: List[str] = field(default_factory=list)
     log: List[str] = field(default_factory=list)
     _t0: float = field(default_factory=time.monotonic, repr=False, compare=False)
+    _tools: Dict[str, Any] = field(default_factory=dict, repr=False, compare=False)  # advertised tool metadata (for the planner)
+    _policy: Any = field(default=None, repr=False, compare=False)  # the CapabilityPolicy that governed this run
 
     def note(self, message: str) -> None:
         line = f"[{time.monotonic() - self._t0:6.2f}s] {redact_secrets(message)}"
@@ -194,6 +207,8 @@ class ReaReport:
     def to_dict(self) -> Dict[str, Any]:
         d = asdict(self)
         d.pop("_t0", None)
+        d.pop("_tools", None)
+        d.pop("_policy", None)
         return d
 
 
@@ -880,14 +895,22 @@ def run_rea_inspection(info: Any, fetcher: SafeFetcher, settings: Optional[Setti
     rep = ReaReport()
     try:
         return _run(rep, info, fetcher, command, Path(project_dir) if project_dir else Path(PROJECT_ROOT),
-                    client_factory or ReaMcpClient, health_cache)
+                    client_factory or ReaMcpClient, health_cache, budget=_budget_from(settings))
     except Exception as exc:  # the stage must never take the pipeline down; the failure is shown in the UI
         log.exception("REA inspection crashed")
         return _finish(rep, FAILED, f"Unexpected error in the REA stage: {type(exc).__name__}: {exc}")
 
 
+def _budget_from(settings: Optional[Settings]) -> Budget:
+    """The adaptive-investigation budget: the module ceilings, overridden by any values the caller put on Settings."""
+    return Budget(max_calls=getattr(settings, "rea_max_investigation_calls", MAX_INVESTIGATION_CALLS) or MAX_INVESTIGATION_CALLS,
+                  max_seconds=getattr(settings, "rea_max_investigation_seconds", MAX_INVESTIGATION_SECONDS) or MAX_INVESTIGATION_SECONDS,
+                  max_failures=getattr(settings, "rea_max_investigation_failures", MAX_INVESTIGATION_FAILURES) or MAX_INVESTIGATION_FAILURES)
+
+
 def _run(rep: ReaReport, info: Any, fetcher: SafeFetcher, command: Optional[Sequence[str]], project_dir: Path,
-         client_factory: Callable[..., ReaMcpClient], health_cache: Optional[HealthCache]) -> ReaReport:
+         client_factory: Callable[..., ReaMcpClient], health_cache: Optional[HealthCache],
+         budget: Optional[Budget] = None) -> ReaReport:
     model, targets, total, why = plan_targets(info)
     if model is None:
         rep.note("No REA tool was called: nothing to inspect.")
@@ -973,8 +996,15 @@ def _run(rep: ReaReport, info: Any, fetcher: SafeFetcher, command: Optional[Sequ
                 missing = [t for t in REQUIRED_TOOLS if t not in tools]
                 if missing:
                     return _finish(rep, FAILED, f"This REA server does not advertise the required tool(s) {missing}; none was called.")
-                # Capability discovery: the tools the server advertises that the policy would let us call (reporting only).
+                # Dynamic capability discovery: the tools the server advertises, the ones the policy allows, the ones it refuses
+                # (and why), and the capability tag each eligible tool serves - all from the advertised metadata.
                 rep.capabilities = known_safe_tools(tools, client.policy)
+                rep.capabilities_by_tag = tag_tools(tools, client.policy)
+                rep.refusals = client.policy.refusals(tools)
+                rep._tools = dict(tools)
+                rep._policy = client.policy
+                rep.note(f"capabilities: {len(rep.capabilities)} eligible of {len(tools)} advertised; "
+                         f"tags {sorted(rep.capabilities_by_tag)}")
                 for tool, args, target in core_plan:
                     try:
                         call = client.call_tool(tool, args, target=target)
@@ -982,10 +1012,11 @@ def _run(rep: ReaReport, info: Any, fetcher: SafeFetcher, command: Optional[Sequ
                         call = ReaToolCall(tool=tool, arguments=args, ok=False, target=target, error=f"not sent: {exc}")
                     rep.calls.append(call)
                     rep.note(f"tools/call {tool} [{target}] -> {'ok' if call.ok else 'FAILED: ' + str(call.error)[:160]} ({call.duration_s}s)")
-                # Iterative, capability-driven investigation: plan from what the core inspection produced (retained evidence
-                # ids) and what the analysis still needs, run the plan, then replan once with the new facts. Every extra call is
-                # OPTIONAL: a failure is recorded and noted but never changes the stage's verdict, which the core inspection set.
-                _capability_rounds(rep, client, files)
+                # Adaptive, evidence-gap-driven investigation: raise the open questions from the facts the core inspection just
+                # produced, plan the eligible tools that can answer them, execute, fold the results back in, and replan until the
+                # questions are exhausted (or no capability answers them, or a step stops producing evidence, or the budget is
+                # spent). Every extra call is OPTIONAL: a failure is recorded and noted but never changes the stage's verdict.
+                _adaptive_investigation(rep, client, files, header_ok=bool(rep.header_summaries), budget=budget)
         except ReaError as exc:
             rep.note(f"REA transport/protocol problem: {exc}")
             if health_cache is not None:
@@ -1026,41 +1057,94 @@ def _run(rep: ReaReport, info: Any, fetcher: SafeFetcher, command: Optional[Sequ
     return _finish(rep, PARTIAL, "REA inspected part of the model: " + "; ".join(problems) + ".")
 
 
-def _capability_rounds(rep: ReaReport, client: ReaMcpClient, files: List[Tuple[str, Path]]) -> int:
-    """Iterative, capability-driven investigation on top of the header inspection.
+def _evidence_state(rep: ReaReport, files: List[Tuple[str, Path]], *, header_ok: bool) -> EvidenceState:
+    """Build the evidence state the question generators read, from the facts the header inspection already produced.
 
-    Round 1: page the retained Evidence the model inspection just produced (addressed by the real ``parent_evidence_id``), and
-    fill the byte-level gap the header alone cannot (byte entropy) using only our own scratch files.
-    Round 2: after the new facts, ask the whole-session views (REA's residual-unknown ledger, the canonical Evidence bundle) -
-    the stopping condition is simply that the replan yields nothing new, so the loop is bounded by the plan, never by a step cap.
+    ``capabilities`` is the tag -> eligible-tool map discovered from the advertised metadata; a capability the server does not
+    advertise is simply absent, so no question that needs it is raised."""
+    by_file = {str(s.get("file")): s for s in rep.header_summaries if isinstance(s, dict)}
+    header_bytes = {n: int((by_file.get(n) or {}).get("header_bytes") or 0) for n, _ in files}
+    formats = {n: str((by_file.get(n) or {}).get("format") or "") for n, _ in files}
+    archs = {n: (by_file.get(n) or {}).get("architecture") for n, _ in files}
+    # Count the inspected files from the calls: ``rep.shards_inspected`` is only filled in after this stage runs.
+    inspected = sum(1 for c in rep.calls if c.tool == MODEL_TOOL and c.ok)
+    partial = bool(rep.shards_total and inspected < rep.shards_total)
+    retained = {evid: target for target, evid in _retained_ids_by_target(rep).items() if isinstance(evid, str)}
+    return EvidenceState(
+        files=[(n, str(p)) for n, p in files],
+        header_bytes=header_bytes,
+        formats=formats,
+        architectures=archs,
+        retained_ids=retained,
+        header_ok=header_ok,
+        coverage_partial=partial,
+        capabilities=dict(rep.capabilities_by_tag or tag_tools(rep._tools, rep._policy)),
+    )
+
+
+def _adaptive_investigation(rep: ReaReport, client: ReaMcpClient, files: List[Tuple[str, Path]], *, header_ok: bool,
+                            budget: Optional[Budget] = None) -> int:
+    """Adaptive, evidence-driven investigation on top of the header inspection.
+
+    The loop is: read the collected evidence -> raise the open questions -> plan the eligible tools that can answer them ->
+    execute -> fold the results back into the evidence state -> replan. It continues while open questions remain answerable and a
+    step keeps producing new evidence; it stops when the questions are exhausted, no eligible capability answers them, a step
+    yields nothing new, the same call would repeat, failures pass the retry budget, or the call/time budget is spent. There is no
+    fixed round limit; ``MAX_INVESTIGATION_ROUNDS`` is only a backstop against a pathological planner.
 
     Every call here is OPTIONAL: a refused or failing call is recorded and noted but never changes the stage's verdict, which the
     core header inspection already set."""
-    made = 0
-    header_bytes = {str(s.get("file")): s.get("header_bytes") for s in rep.header_summaries if isinstance(s, dict)}
-    header_files = [(n, str(p), header_bytes.get(n)) for n, p in files]
-    base_gaps = [GAP_RETAINED_METADATA, GAP_BYTE_ENTROPY]
-    for round_no, gaps in enumerate((base_gaps, [GAP_RESIDUAL_UNKNOWNS, GAP_EVIDENCE_BUNDLE]), start=1):
-        ctx = PlanContext(available=client.tools, header_files=header_files,
-                          retained_ids=_retained_ids_by_target(rep), missing_evidence=gaps)
-        plan = plan_capability_investigation(ctx, client.policy)
+    budget = budget or Budget(max_calls=MAX_INVESTIGATION_CALLS, max_seconds=MAX_INVESTIGATION_SECONDS,
+                              max_failures=MAX_INVESTIGATION_FAILURES)
+    state = _evidence_state(rep, files, header_ok=header_ok)
+    seen: Set[Tuple[str, str]] = set()
+    made = failures = 0
+    stop = "the open questions were exhausted"
+    for _round in range(MAX_INVESTIGATION_ROUNDS):
+        questions = generate_questions(state)
+        rep.questions = [{"qid": q.qid, "kind": q.kind, "target": q.target, "text": q.text} for q in questions]
+        plan = filter_plan(plan_questions(state, questions, client.policy), client.tools, client.policy)
+        plan = [pc for pc in plan if (pc.tool, pc.target) not in seen]  # duplicate-call prevention
         if not plan:
-            rep.note(f"Capability round {round_no}: nothing new to investigate.")
-            continue
-        rep.note(f"Capability round {round_no}: planned {len(plan)} call(s): {[c.tool for c in plan]}.")
+            stop = ("no further eligible capability call could answer the remaining questions" if questions
+                    else "the open questions were exhausted")
+            break
+        if budget.exhausted(made, failures):
+            stop = "the investigation resource budget was spent"
+            break
+        rep.note(f"Investigation round {_round + 1}: {len(plan)} call(s) planned for {len(questions)} open question(s).")
+        before = state_signature(state)
         for pc in plan:
+            if budget.exhausted(made, failures):
+                stop = "the investigation resource budget was spent"
+                break
+            seen.add((pc.tool, pc.target))
             try:
                 call = client.call_tool(pc.tool, pc.arguments, target=pc.target)
             except ReaError as exc:  # refused by the policy / schema check: nothing was sent
                 call = ReaToolCall(tool=pc.tool, arguments=pc.arguments, ok=False, target=pc.target, error=f"not sent: {exc}")
             rep.calls.append(call)
             made += 1
+            if call.ok:
+                observe(state, pc.capability, pc.target, call.output)
+            else:
+                failures += 1
             rep.investigation.append({"tool": pc.tool, "target": pc.target, "reason": pc.reason, "ok": call.ok,
+                                      "capability": pc.capability, "question": pc.question,
                                       "detail": (str(call.error)[:160] if not call.ok else _brief(call.output))})
-            rep.note(f"tools/call {pc.tool} [{pc.target}] ({pc.reason}) -> "
+            rep.note(f"tools/call {pc.tool} [{pc.target}] ({pc.capability}) -> "
                      f"{'ok' if call.ok else 'FAILED (optional): ' + str(call.error)[:120]} ({call.duration_s}s)")
-    if made:
-        rep.note(f"Capability investigation made {made} optional call(s); they never affect the status.")
+        if budget.exhausted(made, failures):
+            stop = "the investigation resource budget was spent"
+            break
+        if state_signature(state) == before:
+            stop = "no further call produced new evidence"
+            break
+    else:
+        stop = "the investigation reached its backstop round limit"
+    rep.stop_reason = stop
+    rep.budget = {**budget.as_dict(), "calls_made": made, "failures": failures}
+    rep.note(f"Adaptive investigation made {made} optional call(s), {failures} failure(s); stopped because {stop}.")
     return made
 
 

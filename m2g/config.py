@@ -63,6 +63,11 @@ class Settings:
     # Security defaults: both are OFF unless explicitly enabled.
     allow_remote_code: bool = False
     allow_pickle_weights: bool = False
+    # REA adaptive-investigation budget: resource ceilings for the dynamic, evidence-gap-driven REA investigation (NOT a round
+    # limit - the loop stops when the open questions are exhausted). Tune with M2G_REA_MAX_* if a larger repository needs more.
+    rea_max_investigation_calls: int = 40
+    rea_max_investigation_seconds: float = 120.0
+    rea_max_investigation_failures: int = 5
     hf_token: Optional[str] = field(default=None, repr=False)
     github_token: Optional[str] = field(default=None, repr=False)
 
@@ -83,6 +88,9 @@ class Settings:
             http_timeout=float(os.environ.get("M2G_HTTP_TIMEOUT", "15")),
             allow_remote_code=_env_bool("M2G_ALLOW_REMOTE_CODE", False),
             allow_pickle_weights=_env_bool("M2G_ALLOW_PICKLE_WEIGHTS", False),
+            rea_max_investigation_calls=int(os.environ.get("M2G_REA_MAX_CALLS", "40")),
+            rea_max_investigation_seconds=float(os.environ.get("M2G_REA_MAX_SECONDS", "120")),
+            rea_max_investigation_failures=int(os.environ.get("M2G_REA_MAX_FAILURES", "5")),
             hf_token=os.environ.get("HF_TOKEN") or None,
             github_token=os.environ.get("GITHUB_TOKEN") or None,
         )

@@ -16,13 +16,16 @@ _STATUS_MAP = {"completed": COLLECTED, "partial": COLLECTED, "failed": INACCESSI
 _RAW_LIMIT = 8_000
 
 
-def inventory_item(clock: Clock, tools_discovered: int = 0, capabilities: Optional[Sequence[str]] = None) -> EvidenceItem:
+def inventory_item(clock: Clock, tools_discovered: int = 0, capabilities: Optional[Sequence[str]] = None,
+                   capabilities_by_tag: Optional[Any] = None, refusals: Optional[Any] = None) -> EvidenceItem:
     """What the platform lets REA do (the capability policy and its fixed arguments), as a fact about the collection, not the model."""
     data = {"allowed_tools": list(ALLOWED_TOOLS), "required_tools": list(REQUIRED_TOOLS),
             "fixed_arguments": {k: dict(v) for k, v in FIXED_ARGS.items()},
-            "capability_policy": "tools are selected from the advertised schemas: never destructive, never open-world, and only "
-                                 "with arguments this platform can supply",
+            "capability_policy": "tools are selected dynamically from the advertised schemas: never destructive, never open-world, "
+                                 "read-only only, and only with arguments this platform can supply",
             "capabilities_discovered": list(capabilities or []),
+            "capabilities_by_tag": {str(k): list(v) for k, v in (capabilities_by_tag or {}).items()},
+            "refused_tools": dict(refusals or {}),
             "tools_advertised_by_server": tools_discovered,
             "note": "Only tools the capability policy permits can be called; every other advertised tool is refused by the client."}
     return EvidenceItem("rea:inventory", "rea-inventory", COLLECTED,
@@ -55,7 +58,12 @@ def collect_rea(report: Optional[Any], clock: Clock, secrets: Sequence[str] = ()
     server = " ".join(str(report.server.get(k, "")) for k in ("name", "version")).strip() or "REA"
     data = {"status": report.status, "reason": report.reason, "server": report.server, "tools_discovered": report.tools_discovered,
             "capabilities_discovered": list(getattr(report, "capabilities", []) or []),
+            "capabilities_by_tag": dict(getattr(report, "capabilities_by_tag", {}) or {}),
+            "refused_tools": dict(getattr(report, "refusals", {}) or {}),
+            "questions": list(getattr(report, "questions", []) or []),
             "investigation": list(getattr(report, "investigation", []) or []),
+            "stop_reason": str(getattr(report, "stop_reason", "") or ""),
+            "budget": dict(getattr(report, "budget", {}) or {}),
             "tools_invoked": [c.tool for c in report.calls], "shards_total": report.shards_total,
             "shards_inspected": report.shards_inspected, "bytes_downloaded": report.bytes_downloaded,
             "http_requests": report.http_requests, "health_check": report.health_check, "findings": list(report.findings),
@@ -64,7 +72,8 @@ def collect_rea(report: Optional[Any], clock: Clock, secrets: Sequence[str] = ()
     if redacted:  # a secret in the report: store the redacted structure, never the original
         data = json.loads(text)
     status = _STATUS_MAP.get(report.status, INACCESSIBLE)
-    items = [inventory_item(clock, report.tools_discovered, getattr(report, "capabilities", None)),
+    items = [inventory_item(clock, report.tools_discovered, getattr(report, "capabilities", None),
+                            getattr(report, "capabilities_by_tag", None), getattr(report, "refusals", None)),
              EvidenceItem("rea:status", "rea-status", status, Provenance(SOURCE_REA, server, METHOD_REPORT, None, clock()), data=data,
                           redacted=redacted, untrusted=False,
                           error=None if status == COLLECTED else sanitize(str(report.reason), secrets)[0][:300])]
