@@ -234,7 +234,12 @@ def refs_from_rea(a: Any) -> List[EvidenceRef]:
 
     REA read the weight files' own headers, so its declarations are DIRECT observations of the artifact. Everything here is
     read from data the analysis already holds: nothing is re-inspected and nothing is invented. A REA finding that failed or a
-    tool that was never called contributes no reference, so an unsupported claim can never be 'verified' by REA."""
+    tool that was never called contributes no reference, so an unsupported claim can never be 'verified' by REA.
+
+    Coverage discipline (never present a partial total as complete): REA's parameter sum is only a COMPLETE observation when it
+    inspected every discovered weight file. When only some shards were read (``shards_inspected < shards_total``) the sum is a
+    LOWER BOUND, so it is recorded under the separate ``parameter_count_lower_bound`` field - it can corroborate a larger Python
+    figure but can never be presented as the total or contradict one."""
     rea = getattr(a, "rea", None)
     if not isinstance(rea, dict):
         return []
@@ -256,9 +261,17 @@ def refs_from_rea(a: Any) -> List[EvidenceRef]:
                                     detail=f"the header of {file} declares architecture {s['architecture']}",
                                     location=file, agrees=None))
     if saw_params:
-        refs.append(EvidenceRef("rea:params:total", "parameter_count", "rea", DIRECT, value=params_total,
-                                detail="sum of the safetensors/GGUF header declarations REA read", location="REA header inspection",
-                                agrees=None))
+        total_files = _num(rea.get("shards_total")) or 0
+        inspected = _num(rea.get("shards_inspected")) or 0
+        complete = (not total_files) or inspected >= total_files
+        if complete:
+            refs.append(EvidenceRef("rea:params:total", "parameter_count", "rea", DIRECT, value=params_total,
+                                    detail="sum of the safetensors/GGUF header declarations REA read", location="REA header inspection",
+                                    agrees=None))
+        else:
+            refs.append(EvidenceRef("rea:params:lower_bound", "parameter_count_lower_bound", "rea", DIRECT, value=params_total,
+                                    detail=f"a LOWER BOUND: REA read {inspected} of {total_files} discovered weight file(s)",
+                                    location="REA header inspection", agrees=None))
     for i, call in enumerate(rea.get("calls") or []):
         if not isinstance(call, dict) or not call.get("ok"):
             continue
@@ -359,6 +372,25 @@ def build_claims(a: Any, repo: Any = None, src: Any = None) -> List[Claim]:
                            unknowns=[] if values else ["parameter count"],
                            limitations=["weight files are read by header only; tensor values are never inspected"],
                            coverage_gap=coverage_gap))
+
+    # A REA parameter sum that covers only part of the discovered weight files is a LOWER BOUND, kept as its own claim so it is
+    # never mistaken for the total (see refs_from_rea). It corroborates a Python figure at least as large as it, and contradicts
+    # a smaller one, but is never presented as the complete count.
+    lb_refs = by_field.get("parameter_count_lower_bound", [])
+    lb_values = sorted({_num(r.value) for r in lb_refs if _num(r.value) is not None})
+    py_val = _num(getattr(getattr(a, "hardware", None), "params", None))
+    lb_unknowns: List[str] = []
+    if lb_values:
+        lb = lb_values[0]
+        if py_val is None:
+            lb_unknowns.append("the total parameter count (REA read only part of the weight files, so this is a lower bound)")
+        elif lb > py_val * 1.02:
+            lb_unknowns.append("the parameter count (REA's partial header sum already exceeds the Python figure)")
+    claims.append(validate("parameter_count_lower_bound", lb_values[0] if len(lb_values) == 1 else (lb_values or None),
+                           [EvidenceRef(r.id, r.field, r.source_kind, r.directness, r.value, r.detail, r.location,
+                                        agrees=(_num(r.value) == lb_values[0]) if lb_values else None) for r in lb_refs],
+                           unknowns=lb_unknowns or ([] if lb_values else ["a header-derived lower bound for the parameter count"]),
+                           limitations=["REA read only some of the discovered weight files; the sum is a lower bound, not the total"]))
 
     # weight format(s): what the files declare, from the evidence bundle and REA's header read.
     fmts = by_field.get("weight_format", [])

@@ -224,6 +224,7 @@ class Question:
     target: str  # the repository file, or "session" for a whole-analysis question
     text: str
     arguments: Mapping[str, Any] = field(default_factory=dict)  # candidate arguments, filtered to the chosen tool's schema
+    priority: int = 0  # higher = investigate earlier (a partial-coverage or unresolved-architecture gap outranks a generic ledger read)
 
 
 @dataclass
@@ -313,16 +314,18 @@ def unanswered_source_questions(state: EvidenceState) -> List[Question]:
 
 
 def generate_questions(state: EvidenceState) -> List[Question]:
-    """Read the evidence state and return the OPEN questions, in a stable order, one per (kind, target).
+    """Read the evidence state and return the OPEN questions, highest priority first, one per (kind, target).
 
     A question is raised only when the evidence is genuinely missing, incomplete, ambiguous or conflicting - never because a fixed
     list says so. The generators are evidence-driven: e.g. the entropy question is asked for a file whose format is unknown, not
-    for every file; the retained-view question is asked only when the inspection really advertised a retained Evidence id."""
+    for every file; the retained-view question is asked only when the inspection really advertised a retained Evidence id. Each
+    question carries a ``priority`` so a scarce budget is spent on the questions that matter most (a partial-coverage or
+    unresolved-architecture gap outranks a generic ledger read)."""
     qs: List[Question] = []
     seen: Set[Tuple[str, str]] = set()
 
-    def add(kind: str, target: str, text: str, arguments: Mapping[str, Any]) -> None:
-        candidate = Question(f"{kind}:{target}", kind, target, text, dict(arguments))
+    def add(kind: str, target: str, text: str, arguments: Mapping[str, Any], priority: int = 0) -> None:
+        candidate = Question(f"{kind}:{target}", kind, target, text, dict(arguments), priority)
         if not _can_answer(state, candidate):
             return  # no eligible advertised tool can answer it: it remains a recorded gap
         key = (kind, target)
@@ -331,17 +334,18 @@ def generate_questions(state: EvidenceState) -> List[Question]:
         seen.add(key)
         qs.append(candidate)
 
-    # Per-file ambiguity/conflict: format undetermined, or an architecture the header did not confirm.
+    # Per-file ambiguity/conflict: format undetermined, or an architecture the header did not confirm. A missing architecture is
+    # the most decision-relevant gap (it drives loading and the interface), so it outranks a merely-unknown byte format.
     for name, path in state.files:
         hdr = int(state.header_bytes.get(name) or 0)
         if name in state.entropy_done or hdr <= 0:
             continue
         if not state.formats.get(name):
             add("byte_entropy", name, f"the weight format of {name} could not be determined from its header",
-                {"path": path, "offset": 0, "length": hdr, "detail": "summary"})
+                {"path": path, "offset": 0, "length": hdr, "detail": "summary"}, priority=40)
         elif not state.architectures.get(name):
             add("byte_entropy", name, f"the architecture of {name} was not declared in its header",
-                {"path": path, "offset": 0, "length": hdr, "detail": "summary"})
+                {"path": path, "offset": 0, "length": hdr, "detail": "summary"}, priority=60)
 
     # Page the retained Evidence an inspection advertised (or a later call revealed), once each - never twice. Keyed by the
     # evidence id (not the file) so two ids for the same file are two distinct pages.
@@ -349,32 +353,35 @@ def generate_questions(state: EvidenceState) -> List[Question]:
         if isinstance(evid, str) and evid.startswith("ev_") and evid not in state.paged_ids:
             add("retained_view", evid, f"the retained Evidence {evid[:11]}... for {target} has not been paged yet",
                 {"source": {"kind": "retained-evidence", "evidence_id": evid},
-                 "view": {"kind": "model-artifact", "collection": "metadata", "offset": 0, "limit": 64}})
+                 "view": {"kind": "model-artifact", "collection": "metadata", "offset": 0, "limit": 64}}, priority=50)
+
+    # Coverage question: a partial inspection leaves the uninspected shards unexplained. This is the single most important gap
+    # when coverage is partial (it is what makes REA's parameter figure a lower bound), so it gets the highest priority.
+    if state.coverage_partial and "artifact_inventory" not in state.have:
+        add("artifact_inventory", "session", "only part of the model's weight files were inspected", {"detail": "summary"},
+            priority=90)
 
     # Whole-analysis questions: is anything still unknown to REA, and what did REA actually retain?
     if "residual_unknowns" not in state.have:
-        add("residual_unknowns", "session", "REA may hold residual unknowns the analysis has not seen", {"limit": 100})
+        add("residual_unknowns", "session", "REA may hold residual unknowns the analysis has not seen", {"limit": 100}, priority=20)
     if "evidence_bundle" not in state.have:
         add("evidence_bundle", "session", "the full set of Evidence REA retained has not been summarised",
-            {"detail": "summary"})
-
-    # Coverage question: a partial inspection leaves the uninspected shards unexplained.
-    if state.coverage_partial and "artifact_inventory" not in state.have:
-        add("artifact_inventory", "session", "only part of the model's weight files were inspected", {"detail": "summary"})
+            {"detail": "summary"}, priority=10)
 
     # An overview question when the header inspection produced nothing usable but an inspection tool exists.
     if not state.header_ok and "binary_overview" not in state.have:
-        add("binary_overview", "session", "the header inspection produced no usable facts", {})
+        add("binary_overview", "session", "the header inspection produced no usable facts", {}, priority=70)
 
     # --- Source-code investigation, informed by the Analyzer's own gaps ------------------------------------------------------
     # These questions target the source files the platform already collected safely, and are added only when an advertised
     # capability can answer them (REA 6.8.0 advertises no source reader, so they remain recorded gaps via
     # ``unanswered_source_questions``). ``add`` already drops any question no eligible tool can answer.
     for q in _source_questions(state):
-        add(q.kind, q.target, q.text, q.arguments)
+        add(q.kind, q.target, q.text, q.arguments, priority=55)
 
+    # Order: highest priority first, then the stable capability/tag order, then target name.
     order = {tag: i for i, tag in enumerate(TAG_ORDER)}
-    qs.sort(key=lambda q: (order.get(q.kind, len(TAG_ORDER)), q.target))
+    qs.sort(key=lambda q: (-q.priority, order.get(q.kind, len(TAG_ORDER)), q.target))
     return qs
 
 
@@ -427,6 +434,7 @@ class PlannedCall:
     reason: str
     question: str = ""
     capability: str = ""
+    priority: int = 0  # the priority of the question it answers (higher = more important to investigate)
 
 
 @dataclass
@@ -515,7 +523,9 @@ def plan_questions(state: EvidenceState, questions: Sequence[Question],
         if key in seen:
             continue
         seen.add(key)
-        planned.append(PlannedCall(tool, dict(q.arguments), q.target, q.text, q.qid, q.kind))
+        planned.append(PlannedCall(tool, dict(q.arguments), q.target, q.text, q.qid, q.kind, q.priority))
+    # Most important questions first, so a scarce budget is spent on them; a stable tie-break keeps the plan deterministic.
+    planned.sort(key=lambda p: (-p.priority, p.capability, p.target, p.tool))
     return planned
 
 
@@ -535,7 +545,7 @@ def filter_plan(planned: Sequence[PlannedCall], tools: Mapping[str, Mapping[str,
         args = _filter_arguments(p.arguments, schema)
         if not _required_satisfied(schema, args):
             continue
-        out.append(PlannedCall(p.tool, args, p.target, p.reason, p.question, p.capability))
+        out.append(PlannedCall(p.tool, args, p.target, p.reason, p.question, p.capability, p.priority))
     return out
 
 

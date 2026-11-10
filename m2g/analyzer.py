@@ -1568,11 +1568,22 @@ def _rea_side(rea: Any) -> Dict[str, Any]:
              for s in rea.get("header_summaries") or [] if isinstance(s, dict) and s.get("file") in ok_targets]
     status = str(rea.get("status") or "not_invoked")[:40]
     usable = status in ("completed", "partial") and bool(files)
-    coverage = "none" if not usable else ("complete" if status == "completed" else "partial")
+    total = _as_int(rea.get("shards_total")) or 0
+    inspected = _as_int(rea.get("shards_inspected")) or 0
+    # Coverage is derived from the COUNTS, not the status alone: a 'completed' status that still inspected fewer files than were
+    # discovered is reported as partial, so a partial parameter sum is never presented as covering the whole model.
+    if not usable:
+        coverage = "none"
+    elif total and inspected < total:
+        coverage = "partial"
+    elif status == "completed":
+        coverage = "complete"
+    else:
+        coverage = "partial"
     formats = sorted({str(f.get("format")) for f in files if f.get("format")})
     return {
         "status": status, "reason": str(rea.get("reason") or "")[:300], "usable": usable, "coverage": coverage,
-        "files_inspected": _as_int(rea.get("shards_inspected")) or 0, "files_total": _as_int(rea.get("shards_total")) or 0,
+        "files_inspected": inspected, "files_total": total,
         "server": rea.get("server") if isinstance(rea.get("server"), dict) else {},
         "tools_executed": [c.get("tool") for c in calls],
         "files": files,
@@ -2099,8 +2110,31 @@ def _attach_combined(a: Analysis) -> None:
                                "error": f"The combined report could not be built ({type(exc).__name__}); the Python analysis is unaffected."}
 
 
+# The five honest classes an analysis fact can belong to, so a consumer can always tell where a fact came from. "metadata" is
+# declared by the repository/Hub metadata, "source" is observed statically in the repository's own files, "rea" is a REA header
+# observation, "inferred" is reasoned from evidence (never presented as observed), "unknown" is a recorded gap.
+_EVIDENCE_CLASSES = ("metadata", "source", "rea", "inferred", "unknown")
+_TIER_TO_CLASS = {"authoritative": "metadata", "structural": "source", "heuristic": "inferred"}
+
+
+def _evidence_class(provenance: str, source: str = "") -> str:
+    """Map a ledger row's raw provenance to one of the five honest classes (see ``_EVIDENCE_CLASSES``)."""
+    p = str(provenance or "").strip().lower()
+    if p == "rea" or str(source or "").strip().upper() == "REA":
+        return "rea"
+    if p in _TIER_TO_CLASS:
+        return _TIER_TO_CLASS[p]
+    if p in _EVIDENCE_CLASSES:
+        return p
+    return "unknown"
+
+
 def _attach_evidence_ledger(a: Analysis, info: RepoInfo) -> None:
-    """Normalize all analysis inputs into a deduplicated, source-preserving ledger."""
+    """Normalize all analysis inputs into a deduplicated, source-preserving ledger.
+
+    Every row carries both its raw ``provenance`` and a normalized ``evidence_class`` (one of ``metadata``, ``source``, ``rea``,
+    ``inferred``, ``unknown``), so a consumer can always tell a metadata-declared fact from a statically-observed one, a REA header
+    observation from an inference, and a genuine gap from a finding."""
     rows: List[Dict[str, Any]] = [dict(x) for x in getattr(info, "evidence_ledger", []) if isinstance(x, dict)]
     for e in a.task_evidence:
         rows.append({"source": e.source, "location": e.signal, "finding": e.detail, "provenance": e.tier,
@@ -2116,6 +2150,7 @@ def _attach_evidence_ledger(a: Analysis, info: RepoInfo) -> None:
     merged: Dict[Tuple[str, str], Dict[str, Any]] = {}
     for row in rows:
         finding, provenance = str(row.get("finding", "")), str(row.get("provenance", ""))
+        row["evidence_class"] = _evidence_class(provenance, str(row.get("source", "")))
         key = (finding, provenance)
         if key not in merged:
             merged[key] = row
@@ -2128,6 +2163,10 @@ def _attach_evidence_ledger(a: Analysis, info: RepoInfo) -> None:
             prior["confidence"] = max(float(prior.get("confidence", 0) or 0), float(row.get("confidence", 0) or 0))
     a.evidence_ledger = list(merged.values())
     a.investigation_coverage["repository"] = dict(getattr(info, "inspection_coverage", {}) or {})
+    # A tally per class, so a consumer can see at a glance how much of the analysis is metadata-declared, statically observed,
+    # REA-observed, inferred or unknown - and never mistake an inference for an observation.
+    a.investigation_coverage["evidence_classes"] = {
+        cls: sum(1 for r in a.evidence_ledger if r.get("evidence_class") == cls) for cls in _EVIDENCE_CLASSES}
 
 
 def analyze(info: RepoInfo, settings: Optional[Settings] = None) -> Analysis:

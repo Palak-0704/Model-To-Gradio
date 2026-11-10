@@ -73,6 +73,10 @@ class Settings:
     rea_max_investigation_calls: int = 40
     rea_max_investigation_seconds: float = 120.0
     rea_max_investigation_failures: int = 5
+    # How many weight files REA header-inspects per model. The shard set is always discovered dynamically from the file
+    # listing; this is only the resource ceiling on how many of them are read. Coverage is reported honestly against the
+    # discovered total, so a model with more shards than this is reported as partially inspected (never as complete).
+    rea_max_shards: int = 24
     # Deep static source analysis: how many of the repository's own Python modules are parsed per run (bounded, never executed).
     max_source_modules: int = 60
     # A Hugging Face repository that ships custom Python code (config.auto_map / custom_code) is analysed statically too, from the
@@ -106,6 +110,7 @@ class Settings:
             rea_max_investigation_calls=int(os.environ.get("M2G_REA_MAX_CALLS", "40")),
             rea_max_investigation_seconds=float(os.environ.get("M2G_REA_MAX_SECONDS", "120")),
             rea_max_investigation_failures=int(os.environ.get("M2G_REA_MAX_FAILURES", "5")),
+            rea_max_shards=int(os.environ.get("M2G_REA_MAX_SHARDS", "24")),
             max_source_modules=int(os.environ.get("M2G_MAX_SOURCE_MODULES", "60")),
             hf_custom_code_max_files=int(os.environ.get("M2G_HF_CUSTOM_CODE_FILES", "24")),
             hf_custom_code_max_bytes=int(os.environ.get("M2G_HF_CUSTOM_CODE_BYTES", "2000000")),

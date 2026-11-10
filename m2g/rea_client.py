@@ -116,7 +116,7 @@ ALLOWED_TOOLS = (HEALTH_TOOL, MODEL_TOOL, VIEW_TOOL)
 # "summary" is the detail level the tool documents for retained evidence. Both values come from the advertised schema text.
 FIXED_ARGS: Dict[str, Dict[str, Any]] = {HEALTH_TOOL: {}, MODEL_TOOL: {"hash": "header", "detail": "summary"}}
 
-MAX_SHARDS = 3  # at most this many weight files are header-inspected per model
+MAX_SHARDS = 24  # default cap on weight files header-inspected per model (override with Settings.rea_max_shards / M2G_REA_MAX_SHARDS)
 MAX_SOURCE_FILES = 24  # at most this many already-collected source/config files are staged as read-only scratch copies for REA
 MAX_HEADER_BYTES = 8 * 1024 * 1024  # our own ceiling; REA's is 100 MB
 MAX_GGUF_WINDOW_BYTES = 8 * 1024 * 1024  # largest GGUF header window we will fetch (doubling stops here)
@@ -895,8 +895,11 @@ def _inspectable_model(info: Any) -> Tuple[Optional[Any], str]:
     return info, ""
 
 
-def plan_targets(info: Any) -> Tuple[Optional[Any], List[Tuple[str, "WeightFormat"]], int, str]:
-    """(model_info, [(file name, WeightFormat)] to inspect (<= MAX_SHARDS), total inspectable weight files, not-applicable reason)."""
+def plan_targets(info: Any, max_shards: int = MAX_SHARDS) -> Tuple[Optional[Any], List[Tuple[str, "WeightFormat"]], int, str]:
+    """(model_info, [(file name, WeightFormat)] to inspect (<= max_shards), total discoverable weight files, not-applicable reason).
+
+    Every inspectable weight file is discovered dynamically from the repository listing, then bounded by ``max_shards`` (a resource
+    ceiling, not a fixed list). ``total`` is the full discovered count, so a caller can report honest coverage."""
     model, why = _inspectable_model(info)
     if model is None:
         return None, [], 0, why
@@ -907,7 +910,8 @@ def plan_targets(info: Any) -> Tuple[Optional[Any], List[Tuple[str, "WeightForma
         extra = (f" (found {', '.join(other)} weights; header-only inspection is implemented for "
                  f"{', '.join(sorted(WEIGHT_FORMATS))} only)") if other else ""
         return None, [], 0, ("The model has no weight file in a format REA can header-inspect" + extra + ".")
-    return model, targets[:MAX_SHARDS], len(targets), ""
+    limit = max(1, int(max_shards or MAX_SHARDS))
+    return model, targets[:limit], len(targets), ""
 
 
 def _parent_evidence_id(call: ReaToolCall) -> Optional[str]:
@@ -941,7 +945,8 @@ def run_rea_inspection(info: Any, fetcher: SafeFetcher, settings: Optional[Setti
     rep = ReaReport()
     try:
         return _run(rep, info, fetcher, command, Path(project_dir) if project_dir else Path(PROJECT_ROOT),
-                    client_factory or ReaMcpClient, health_cache, budget=_budget_from(settings))
+                    client_factory or ReaMcpClient, health_cache, budget=_budget_from(settings),
+                    max_shards=_max_shards_from(settings))
     except Exception as exc:  # the stage must never take the pipeline down; the failure is shown in the UI
         log.exception("REA inspection crashed")
         return _finish(rep, FAILED, f"Unexpected error in the REA stage: {type(exc).__name__}: {exc}")
@@ -954,10 +959,15 @@ def _budget_from(settings: Optional[Settings]) -> Budget:
                   max_failures=getattr(settings, "rea_max_investigation_failures", MAX_INVESTIGATION_FAILURES) or MAX_INVESTIGATION_FAILURES)
 
 
+def _max_shards_from(settings: Optional[Settings]) -> int:
+    """The resource ceiling on how many weight files are header-inspected (Settings.rea_max_shards, else the module default)."""
+    return max(1, int(getattr(settings, "rea_max_shards", MAX_SHARDS) or MAX_SHARDS))
+
+
 def _run(rep: ReaReport, info: Any, fetcher: SafeFetcher, command: Optional[Sequence[str]], project_dir: Path,
          client_factory: Callable[..., ReaMcpClient], health_cache: Optional[HealthCache],
-         budget: Optional[Budget] = None) -> ReaReport:
-    model, targets, total, why = plan_targets(info)
+         budget: Optional[Budget] = None, max_shards: int = MAX_SHARDS) -> ReaReport:
+    model, targets, total, why = plan_targets(info, max_shards)
     if model is None:
         rep.note("No REA tool was called: nothing to inspect.")
         return _finish(rep, NOT_APPLICABLE, why)
@@ -1111,7 +1121,8 @@ def _run(rep: ReaReport, info: Any, fetcher: SafeFetcher, command: Optional[Sequ
     if len(ok_models) < len(names):
         problems.append(f"{len(ok_models)} of {len(names)} planned file(s) inspected")
     if rep.shards_total > len(names):
-        problems.append(f"only the first {len(names)} of {rep.shards_total} weight files were inspected")
+        problems.append(f"only the first {len(names)} of {rep.shards_total} discovered weight file(s) were inspected "
+                        f"(resource ceiling rea_max_shards={len(names)})")
     return _finish(rep, PARTIAL, "REA inspected part of the model: " + "; ".join(problems) + ".")
 
 
@@ -1214,32 +1225,49 @@ def _adaptive_investigation(rep: ReaReport, client: ReaMcpClient, files: List[Tu
     budget = budget or Budget(max_calls=MAX_INVESTIGATION_CALLS, max_seconds=MAX_INVESTIGATION_SECONDS,
                               max_failures=MAX_INVESTIGATION_FAILURES)
     state = _evidence_state(rep, files, header_ok=header_ok, source_files=source_files, analyzer=analyzer)
-    seen: Set[Tuple[str, str]] = set()
+    seen: Set[Tuple[str, str]] = set()  # (tool, target) already called, so the same question is never re-asked
     made = failures = 0
     stop = "the open questions were exhausted"
     round_number = 0
     while True:
         questions = generate_questions(state)
-        rep.questions = [{"qid": q.qid, "kind": q.kind, "target": q.target, "text": q.text} for q in questions]
+        rep.questions = [{"qid": q.qid, "kind": q.kind, "target": q.target, "text": q.text, "priority": q.priority}
+                         for q in questions]
         # The source questions the Analyzer's own gaps raised that no advertised capability can answer: kept as recorded gaps.
         gaps = unanswered_source_questions(state)
         if gaps:
             rep.source_questions = [{"target": q.target, "text": q.text} for q in gaps]
         plan = filter_plan(plan_questions(state, questions, client.policy, client.tools), client.tools, client.policy)
-        plan = [pc for pc in plan if (pc.tool, pc.target) not in seen]  # duplicate-call prevention
+        # Duplicate-call prevention: drop a call whose (tool, target) was already made, and also a call that repeats the exact
+        # same tool+arguments another planned call already covers this round (two questions resolved by one identical call).
+        plan = [pc for pc in plan if (pc.tool, pc.target) not in seen]
+        deduped: List[PlannedCall] = []
+        signatures: Set[str] = set()
+        for pc in plan:
+            sig = pc.tool + "\x00" + json.dumps(pc.arguments, sort_keys=True, default=str)
+            if sig in signatures:
+                continue
+            signatures.add(sig)
+            deduped.append(pc)
+        plan = deduped
         if not plan:
             stop = ("the answerable investigation questions were exhausted; no further eligible capability call could answer the remaining questions" if questions
                     else "the open questions were exhausted")
             break
-        if budget.exhausted(made, failures):
-            stop = "the investigation resource budget was spent"
+        if budget.calls_exhausted(made) or budget.time_exhausted():
+            stop = ("the investigation call budget was spent" if budget.calls_exhausted(made)
+                    else "the investigation time budget was spent")
             break
         round_number += 1
         rep.note(f"Investigation round {round_number}: {len(plan)} call(s) planned for {len(questions)} open question(s).")
         before = state_signature(state)
         for pc in plan:
-            if budget.exhausted(made, failures):
-                stop = "the investigation resource budget was spent"
+            if budget.calls_exhausted(made) or budget.time_exhausted():
+                stop = ("the investigation call budget was spent" if budget.calls_exhausted(made)
+                        else "the investigation time budget was spent")
+                break
+            if budget.failures_exhausted(failures):
+                stop = f"the investigation failure budget was spent ({failures} failed call(s))"
                 break
             seen.add((pc.tool, pc.target))
             try:
@@ -1253,18 +1281,24 @@ def _adaptive_investigation(rep: ReaReport, client: ReaMcpClient, files: List[Tu
             else:
                 failures += 1
             rep.investigation.append({"tool": pc.tool, "target": pc.target, "reason": pc.reason, "ok": call.ok,
-                                      "capability": pc.capability, "question": pc.question,
+                                      "capability": pc.capability, "question": pc.question, "priority": pc.priority,
                                       "detail": (str(call.error)[:160] if not call.ok else _brief(call.output))})
             rep.note(f"tools/call {pc.tool} [{pc.target}] ({pc.capability}) -> "
                      f"{'ok' if call.ok else 'FAILED (optional): ' + str(call.error)[:120]} ({call.duration_s}s)")
-        if budget.exhausted(made, failures):
-            stop = "the investigation resource budget was spent"
+        if budget.calls_exhausted(made) or budget.time_exhausted():
+            stop = ("the investigation call budget was spent" if budget.calls_exhausted(made)
+                    else "the investigation time budget was spent")
+            break
+        if budget.failures_exhausted(failures):
+            stop = f"the investigation failure budget was spent ({failures} failed call(s))"
             break
         if state_signature(state) == before:
             stop = "no further call produced new evidence"
             break
     rep.stop_reason = stop
-    rep.budget = {**budget.as_dict(), "calls_made": made, "failures": failures}
+    rep.budget = {**budget.as_dict(), "calls_made": made, "failures": failures, "rounds": round_number,
+                  "exhausted": {"calls": budget.calls_exhausted(made), "time": budget.time_exhausted(),
+                                "failures": budget.failures_exhausted(failures)}}
     rep.note(f"Adaptive investigation made {made} optional call(s), {failures} failure(s); stopped because {stop}.")
     return made
 

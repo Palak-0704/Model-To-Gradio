@@ -721,6 +721,59 @@ def _evidence_facts(a: Analysis) -> Any:
     return {"status": "not_collected", "reason": "No evidence collection result is attached to this analysis; nothing beyond the other facts is established."}
 
 
+def _handoff_facts(a: Analysis) -> Dict[str, Any]:
+    """The validated Analyzer-to-Generator handoff: everything OpenCode needs about the model's contract, provenance, limitations and
+    unresolved requirements, in one place. It re-presents facts the analysis already established (no new fetching, no invention), so
+    the generated code is written against the real contract rather than the model's name."""
+    src = (a.ui_hints or {}).get("source_analysis") if isinstance(a.ui_hints, dict) else None
+    io = src.get("io_contract") if isinstance(src, dict) and isinstance(src.get("io_contract"), dict) else {}
+    classes = (a.investigation_coverage or {}).get("evidence_classes") if isinstance(a.investigation_coverage, dict) else {}
+    rea = a.rea if isinstance(a.rea, dict) else {}
+    cfg = (a.model_evidence or {}).get("config") or {}
+    return _safe_tree({
+        "support_status": a.status,
+        "generatable": a.generatable,
+        "model_id": a.model_ref.repo_id,
+        "revision": a.revision,
+        "task": a.task,
+        "library": a.library,
+        "generation_blocked_reasons": list(a.generation_blocked_reasons)[:8],
+        "reasons": list(a.reasons)[:8],
+        "dependencies": list(a.dependencies)[:40],
+        "findings": {
+            "architectures": cfg.get("architectures"),
+            "model_type": cfg.get("model_type"),
+            "input_modalities": list(a.input_modalities),
+            "output_modalities": list(a.output_modalities),
+            "capabilities": [{"name": c.name, "status": c.status, "confidence": c.confidence, "basis": c.basis}
+                             for c in a.capabilities[:8]],
+            "hardware": {"recommended_runtime": a.hardware.recommended_runtime, "params": a.hardware.params,
+                         "params_source": a.hardware.params_source, "est_vram_gb_fp16": a.hardware.est_vram_gb_fp16},
+        },
+        "inference_contract": {
+            "inputs": io.get("inputs") or [{"modality": m} for m in a.input_modalities],
+            "outputs": io.get("outputs") or [{"kind": m} for m in a.output_modalities],
+            "preprocessing": io.get("preprocessing") or [],
+            "postprocessing": io.get("postprocessing") or [],
+            "inference_flow": io.get("inference_flow") or [],
+            "processors": io.get("processors") or [],
+            "model_ids": io.get("model_ids") or [],
+            "contract_verified": bool(io.get("contract_verified")),
+            "unknown": io.get("unknown") or [],
+        },
+        "provenance": {
+            "classes": classes or {},
+            "note": "metadata = declared by repository/Hub metadata; source = observed statically in repository files; "
+                    "rea = a REA header observation; inferred = reasoned from evidence; unknown = a recorded gap.",
+        },
+        "limitations": list(a.uncertainties)[:12],
+        "warnings": list(a.warnings)[:12],
+        "unresolved": [u for u in (io.get("unknown") or [])][:12],
+        "rea_coverage": (a.investigation_coverage or {}).get("rea") if isinstance(a.investigation_coverage, dict) else None,
+        "rea_stop_reason": str(rea.get("stop_reason") or ""),
+    })
+
+
 def _facts(a: Analysis) -> Dict[str, Any]:
     """The analysis (and the inspection evidence it carries) as plain data for the model."""
     ref = a.model_ref
@@ -781,6 +834,7 @@ def _facts(a: Analysis) -> Dict[str, Any]:
     facts["rea_inspection"] = _rea_facts(a)  # deeper/longer than _jsonable allows; sanitised by _safe_tree
     facts["combined_analysis"] = _combined_facts(a)  # Python findings and REA findings side by side, with conflicts and recommendations
     facts["evidence"] = _evidence_facts(a)  # metadata-first evidence collection: what was collected, from where, and what could not be
+    facts["handoff"] = _handoff_facts(a)  # validated Analyzer->Generator handoff: contract, provenance, limitations, unresolved items
     return facts
 
 
@@ -1046,16 +1100,17 @@ def build_request(a: Analysis) -> str:
         "Do not use a bare `python` fence and do not put the marker in a comment, in a heading or in prose: a block whose `m2g:setup` /",
         "`m2g:ui` marker is not on its opening fence line is not recognised and the whole reply is rejected. Write each label once.",
         "Your whole reply contains each of the two labelled fences EXACTLY ONCE: no draft followed by a final version, no corrected or",
-        "repeated block, no copy or quotation of the skeleton below (its `<section 1 code>` / `<section 2 code>` placeholders are not",
-        "code), and no other text before, between or after the two blocks. Decide first, then write only the final blocks. Anything",
-        "else, including a second block with the same label, is rejected as a whole and nothing is kept or merged.",
+        "repeated block, no copy or quotation of the placeholder skeleton below (its @@SECTION_1_CODE@@ / @@SECTION_2_CODE@@ tokens are",
+        "not code), and no other text before, between or after the two blocks. Decide first, then write only the final blocks. Writing",
+        "the SAME section twice is a harmless repetition that is collapsed; writing TWO DIFFERENT versions of the same section is",
+        "rejected as a whole and nothing is kept or merged.",
         "",
         f"{_FENCE}python m2g:setup",
-        "<section 1 code>",
+        "@@SECTION_1_CODE@@",
         _FENCE,
         "",
         f"{_FENCE}python m2g:ui",
-        "<section 2 code>",
+        "@@SECTION_2_CODE@@",
         _FENCE,
         "",
         DATA_BEGIN,
@@ -1088,8 +1143,8 @@ def build_native_request(a: Analysis) -> str:
         "If ARTIFACT_AUTHORIZED is false, get_model must raise a clear RuntimeError before attempting any model load.",
         "Implement verified preprocessing, actual inference, verified postprocessing and Gradio presentation of actual outputs.",
         "If a fact is unknown, do not invent it; the platform will reject the output.",
-        f"{_FENCE}python m2g:setup", "<section 1 code>", _FENCE, "",
-        f"{_FENCE}python m2g:ui", "<section 2 code>", _FENCE, DATA_BEGIN,
+        f"{_FENCE}python m2g:setup", "@@SECTION_1_CODE@@", _FENCE, "",
+        f"{_FENCE}python m2g:ui", "@@SECTION_2_CODE@@", _FENCE, DATA_BEGIN,
         f"{_FENCE}json m2g:facts", json.dumps(facts, indent=2, ensure_ascii=True), _FENCE, DATA_END, "",
     ])
 
@@ -1120,7 +1175,18 @@ def _build_native_header(a: Analysis) -> str:
 # --------------------------------------------------------------------------- reading OpenCode's answer
 
 
-_SKELETON_PLACEHOLDERS = {"<section 1 code>", "<section 2 code>"}
+_SKELETON_PLACEHOLDERS = {"<section 1 code>", "<section 2 code>", "@@SECTION_1_CODE@@", "@@SECTION_2_CODE@@"}
+
+
+def _is_skeleton(body: str) -> bool:
+    """Whether a block body is the unfilled format skeleton (the placeholder the request shows) rather than real code. The skeleton
+    is deliberately made a template placeholder (``@@...@@``) so that, even if a model echoes it, it can never be mistaken for a
+    section and never reaches the syntax check."""
+    return body.strip() in _SKELETON_PLACEHOLDERS
+
+
+def _same_block(a: str, b: str) -> bool:
+    return a.strip() == b.strip()
 
 
 def _block_locations(text: str, parts: Optional[List[str]], key: str) -> List[str]:
@@ -1143,29 +1209,51 @@ def _block_locations(text: str, parts: Optional[List[str]], key: str) -> List[st
             + f"line {(text or '').count(chr(10), part_start, m.start()) + 1}"
         body = m.group(2).strip()
         first = redact_secrets(body.splitlines()[0][:60]) if body else "(empty)"
-        note = " - the unfilled format skeleton copied from the request" if body in _SKELETON_PLACEHOLDERS else ""
+        note = " - the unfilled format skeleton copied from the request" if _is_skeleton(body) else ""
         out.append(f"{where}: {first!r} ({len(body.splitlines())} line(s)){note}")
     return out
 
 
 def extract_sections(text: str, parts: Optional[List[str]] = None) -> Tuple[str, str]:
-    """(setup, ui) from the reply. Exactly one block of each kind is required; anything else is an error, not a guess. Duplicates are
-    never merged, dropped or picked between. ``parts`` (OpenCodeResult.text_parts) only lets the error say which text part and line each
-    block came from."""
+    """(setup, ui) from the reply. Each label must appear exactly once with real code.
+
+    Robustness against the common failure of a model repeating a block: the unfilled format skeleton (whose body is a placeholder)
+    is ignored entirely, and *identical* duplicates of the same label are collapsed to one (the model wrote the same block twice).
+    A *conflicting* duplicate - two different bodies for the same label - is never merged or picked between: the whole reply is
+    rejected, so no generated code is silently discarded. ``parts`` (OpenCodeResult.text_parts) only lets the error say which text
+    part and line each block came from."""
     found: Dict[str, List[str]] = {}
     for m in _SECTION_RE.finditer(text or ""):
-        found.setdefault(m.group(1), []).append(m.group(2))
+        body = m.group(2)
+        if _is_skeleton(body):  # the format skeleton is not a section
+            continue
+        found.setdefault(m.group(1), []).append(body)
+    out: Dict[str, str] = {}
     for key in ("setup", "ui"):
-        count = len(found.get(key, []))
-        if count != 1:
+        blocks = found.get(key, [])
+        distinct: List[str] = []
+        for body in blocks:
+            if not any(_same_block(body, kept) for kept in distinct):
+                distinct.append(body)
+        if len(distinct) == 1:
+            out[key] = distinct[0]
+            continue
+        if not distinct:  # nothing at all for this label
             preview = redact_secrets(" ".join((text or "").split())[:200]) or "(empty reply)"
             where = _block_locations(text, parts, key)
-            detail = (f" Blocks found: {'; '.join(where)}. A repeated block is never merged or discarded: the model must write each "
-                      "labelled block exactly once.") if where else ""
-            raise GenerationError(f"OpenCode's reply must contain exactly one `m2g:{key}` code block, found {count}. "
-                                  f"The marker must be on the opening fence line ({_FENCE}python m2g:{key}), not in a comment "
-                                  f"inside a plain python block.{detail} The reply started with: {preview}")
-    return found["setup"][0], found["ui"][0]
+            detail = (f" Blocks found: {'; '.join(where)}." if where else "")
+            raise GenerationError(
+                f"OpenCode's reply must contain exactly one `m2g:{key}` code block, found 0. The marker must be on the opening fence "
+                f"line ({_FENCE}python m2g:{key}), not in a comment inside a plain python block.{detail} "
+                f"The reply started with: {preview}")
+        where = _block_locations(text, parts, key)
+        preview = redact_secrets(" ".join((text or "").split())[:200]) or "(empty reply)"
+        detail = (f" Blocks found: {'; '.join(where)}." if where else "")
+        raise GenerationError(
+            f"OpenCode's reply contains {len(distinct)} DIFFERENT `m2g:{key}` code blocks. The model must write the labelled block "
+            f"exactly once; a reply with two conflicting versions of the same section is never merged, and nothing is discarded or "
+            f"picked between.{detail} The reply started with: {preview}")
+    return out["setup"], out["ui"]
 
 
 def _parse_section(label: str, source: str) -> ast.AST:

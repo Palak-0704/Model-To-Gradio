@@ -104,6 +104,26 @@ class TestGeneratedCodeShape(unittest.TestCase):
         self.assertTrue(facts("bnb4")["platform_constants"]["PREQUANTIZED"])
         self.assertEqual(facts("sst2")["task_evidence"][0]["tier"], "authoritative")
 
+    def test_facts_carry_a_handoff_block_for_the_generator(self):
+        # The validated Analyzer->Generator handoff is present, describes the real contract, and never overstates support.
+        facts = gg._facts(analyze_preset("sst2"))
+        handoff = facts["handoff"]
+        self.assertEqual(handoff["support_status"], "supported")
+        self.assertTrue(handoff["generatable"])
+        self.assertEqual(handoff["task"], "text-classification")
+        self.assertIn("inference_contract", handoff)
+        self.assertIn("provenance", handoff)
+        self.assertIn("note", handoff["provenance"])  # the classes are explained, so a consumer cannot misread them
+        self.assertIn("limitations", handoff)
+        self.assertIn("findings", handoff)  # dependencies, architecture and capabilities travel with the contract
+        self.assertTrue(handoff["dependencies"])
+        self.assertEqual(handoff["findings"]["model_type"], "distilbert")
+
+    def test_handoff_blocked_reasons_travel_with_the_facts(self):
+        facts = gg._facts(analyze_preset("gguf"))  # a refused (GGUF-only) analysis
+        self.assertFalse(facts["handoff"]["generatable"])
+        self.assertTrue(facts["handoff"]["generation_blocked_reasons"] or facts["handoff"]["reasons"])
+
     def test_no_dangerous_constructs(self):
         banned_calls = {"eval", "exec", "compile", "__import__", "system", "popen", "Popen", "run", "load", "loads"}
         for key in SUPPORTED_EXPECT:
@@ -330,7 +350,7 @@ class TestOpenCodeFlow(unittest.TestCase):
             "prose only": "I cannot do that.",
             "setup only": block("setup", setup),
             "ui only": block("ui", ui),
-            "duplicate setup": block("setup", setup) * 2 + block("ui", ui),
+            "conflicting setup": block("setup", setup) + block("setup", setup + "\n# a second, different version\n") + block("ui", ui),
             "unlabelled blocks": "`" * 3 + "python\nx = 1\n" + "`" * 3,
             "syntax error": reply("def get_model(:\n", ui),
             "empty ui": reply(setup, "  \n"),
@@ -408,12 +428,33 @@ class TestSectionBlockFormat(unittest.TestCase):
         with self.assertRaisesRegex(gg.GenerationError, "exactly one `m2g:setup` code block, found 0"):
             gg.extract_sections(text)
 
-    def test_duplicate_setup_blocks_are_rejected(self):
+    def test_conflicting_setup_blocks_are_rejected(self):
+        setup, ui = self.parts()
+        block = f"{self.F}python m2g:setup\n{setup.strip()}\n{self.F}\n"
+        other = f"{self.F}python m2g:setup\n{setup.strip()}\n# a different second version\n{self.F}\n"
+        text = block + other + f"{self.F}python m2g:ui\n{ui.strip()}\n{self.F}\n"
+        with self.assertRaisesRegex(gg.GenerationError, "2 DIFFERENT `m2g:setup` code blocks"):
+            gg.extract_sections(text)
+
+    def test_identical_setup_blocks_are_collapsed_to_one(self):
+        # A model that writes the SAME section twice (a draft repeated verbatim) is a harmless repetition: it is collapsed to one,
+        # never merged with anything and never a reason to discard the generated code.
         setup, ui = self.parts()
         block = f"{self.F}python m2g:setup\n{setup.strip()}\n{self.F}\n"
         text = block + block + f"{self.F}python m2g:ui\n{ui.strip()}\n{self.F}\n"
-        with self.assertRaisesRegex(gg.GenerationError, "exactly one `m2g:setup` code block, found 2"):
-            gg.extract_sections(text)
+        got_setup, got_ui = gg.extract_sections(text)
+        self.assertEqual(got_setup.strip(), setup.strip())
+        self.assertEqual(got_ui.strip(), ui.strip())
+
+    def test_the_unfilled_format_skeleton_is_ignored_not_parsed(self):
+        # A model that echoes the request's skeleton alongside its real blocks must not be penalised: the placeholder block is not a
+        # section, so it is ignored and the real sections are used.
+        setup, ui = self.parts()
+        skeleton = f"{self.F}python m2g:setup\n@@SECTION_1_CODE@@\n{self.F}\n\n{self.F}python m2g:ui\n@@SECTION_2_CODE@@\n{self.F}\n"
+        real = reply(setup, ui)
+        got_setup, got_ui = gg.extract_sections(skeleton + "\n" + real)
+        self.assertEqual(got_setup.strip(), setup.strip())
+        self.assertEqual(got_ui.strip(), ui.strip())
 
     def test_four_backtick_setup_and_ui_blocks_are_accepted(self):
         setup, ui = self.parts()

@@ -9,12 +9,14 @@ import unittest
 from pathlib import Path
 
 from m2g import gradio_gen as gg
+from m2g import analyzer as an
+from m2g import inspector as ins
 from m2g.colab_gen import generate_notebook
 from m2g.config import Settings
 from m2g.local_script import launcher_filename
 from m2g.pipeline import run_pipeline
 from m2g.validate import validate_notebook
-from fakehub import FakeWeb, PRESETS, hf
+from fakehub import FakeWeb, PRESETS, add_hf_model, hf
 from test_analyzer import analyze_preset
 from test_github_generation import github_repo_for
 
@@ -111,6 +113,50 @@ class TestOversizedModelGeneratesArtifacts(unittest.TestCase):
         self.assertTrue(gh.generatable, (gh.status, gh.reasons))
         self.assertEqual(gh.model_ref.repo_id, PRESETS["huge70b"]["repo_id"])
         self.assertTrue(any(COLAB_WARNING in w for w in gh.warnings))
+
+
+class TestMissingEvidenceAndUnknownHardwareNeverBlockAnalysis(unittest.TestCase):
+    """Requirement #5: missing evidence and unknown/incompatible hardware are warnings or unknowns, never refusal reasons. Analysis
+    and generation must still complete when the model itself is established by firm evidence. These run the real Analyzer over the
+    fake Hub; nothing is downloaded or executed."""
+
+    def _analyze(self, repo_id="acme/x", **override):
+        web = FakeWeb()
+        add_hf_model(web, repo_id, **override)
+        info = ins.inspect_url(f"https://huggingface.co/{repo_id}", web.fetcher())
+        return an.analyze(info), info
+
+    def test_missing_readme_is_not_a_refusal_reason(self):
+        a, _ = self._analyze(pipeline_tag="text-classification",  # no README.md
+                             files=[("config.json", 800), ("model.safetensors", 300_000_000)],
+                             config={"architectures": ["BertForSequenceClassification"], "model_type": "bert"})
+        self.assertEqual(a.status, "supported_with_warnings")
+        self.assertTrue(a.generatable)
+        self.assertEqual(a.reasons, [])
+
+    def test_incomplete_config_is_reported_but_does_not_block(self):
+        a, _ = self._analyze(pipeline_tag="text-classification",  # no config.json
+                             files=[("model.safetensors", 300_000_000), ("README.md", 100)])
+        self.assertTrue(a.generatable, (a.status, a.reasons))
+        self.assertEqual(a.reasons, [])
+        self.assertTrue(any("config.json could not be read" in w for w in a.warnings))
+
+    def test_unknown_hardware_is_reported_and_still_generatable(self):
+        # A well-defined model whose weight file size (and safetensors metadata) is unknown: hardware is 'unknown', not a blocker.
+        a, _ = self._analyze(pipeline_tag="text-classification", files=[("config.json", 800), ("model.safetensors", 0), ("README.md", 100)],
+                             config={"architectures": ["BertForSequenceClassification"], "model_type": "bert"})
+        self.assertEqual(a.hardware.params, None)
+        self.assertEqual(a.hardware.params_source, "unknown")
+        self.assertTrue(a.generatable)
+        self.assertEqual(a.reasons, [])
+
+    def test_hardware_incompatibility_never_reaches_the_refusal_reasons(self):
+        a = analyze_preset("huge70b")
+        self.assertTrue(a.hardware.exceeds_colab)
+        self.assertEqual(a.reasons, [])
+        self.assertEqual(a.generation_blocked_reasons, [])
+        self.assertTrue(a.generatable)
+        self.assertNotIn("hardware", " ".join(a.generation_blocked_reasons).lower())
 
 
 if __name__ == "__main__":
